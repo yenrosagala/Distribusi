@@ -230,6 +230,15 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
     box-shadow: 0 4px 16px rgba(16,24,40,0.06);
 }
 
+/* Ubah form login bawaan Streamlit agar otomatis menjadi card container */
+[data-testid="stForm"] {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px;
+    box-shadow: 0 4px 16px rgba(16,24,40,0.06);
+}
+
 /* ---------- misc widget overrides ---------- */
 .stButton>button[kind="primary"]{
     background: var(--primary) !important;
