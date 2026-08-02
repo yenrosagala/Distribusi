@@ -84,10 +84,7 @@ USERS = {
 # ============================================================
 if not st.session_state["authenticated"]:
   st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-  _, col2, _ = st.columns([1, 1.15, 1])
-  with col2:
-    # Logo & Header Title
-    l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
+  l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
     with l_col2:
       st.image(
           "https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
