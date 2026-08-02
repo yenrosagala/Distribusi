@@ -86,9 +86,7 @@ if not st.session_state["authenticated"]:
   st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
   _, col2, _ = st.columns([1, 1.15, 1])
   with col2:
-    # Membuka card container di paling atas kolom tengah
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    
+    # Logo & Header Title
     l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
     with l_col2:
       st.image(
@@ -98,16 +96,15 @@ if not st.session_state["authenticated"]:
 
     st.markdown(
         """
-            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
-            <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
-                Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
-            </p>
-            """,
+        <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
+        <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
+            Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
+        </p>
+        """,
         unsafe_allow_html=True,
     )
-    st.divider()
     
-    # Form input berada di dalam container .login-card yang sama
+    # Form login otomatis menjadi card container yang membungkus input & tombol secara rapi
     with st.form("login_form"):
       username = st.text_input("Username", placeholder="admin or user")
       password = st.text_input(
@@ -130,12 +127,8 @@ if not st.session_state["authenticated"]:
               "Username or password is incorrect. Please try again."
           )
           
-    # Menutup card container tepat di bawah form agar seluruh elemen masuk ke dalam card
-    st.markdown("</div>", unsafe_allow_html=True)
-    
   st.markdown("</div>", unsafe_allow_html=True)
   st.stop()
-
 # ============================================================
 # NAVIGATION — two top-level sections only. Every sub-page that used
 # to be a separate sidebar button now lives inside a tab within its
