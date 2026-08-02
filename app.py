@@ -15,7 +15,7 @@ import modules.admin_page as transportasi_admin
 # ============================================================
 st.set_page_config(
     page_title="Dashboard Integrasi Papua — Pariwisata & Transportasi",
-    page_icon="📊",
+    page_icon="logo.png"
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -85,7 +85,7 @@ if not st.session_state["authenticated"]:
         st.markdown(
             """
             <div class="brand-block" style="justify-content:center; margin-bottom:14px;">
-                <div class="brand-mark">📊</div>
+                <div class="brand-mark">logo.png</div>
             </div>
             <h2 style='text-align:center; color:#0F172A; margin:0;'>Dashboard Integrasi Papua</h2>
             <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
@@ -129,7 +129,7 @@ with st.sidebar:
     st.markdown(
         """
         <div class="brand-block">
-            <div class="brand-mark">📊</div>
+            <div class="brand-mark">logo.png</div>
             <div>
                 <p class="sidebar-title">Dashboard Integrasi Papua</p>
                 <p class="sidebar-subtitle">Pariwisata &amp; Transportasi</p>
