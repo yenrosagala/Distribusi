@@ -83,49 +83,50 @@ USERS = {
 # LOGIN SCREEN
 # ============================================================
 if not st.session_state["authenticated"]:
-  st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
-    l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
-    with l_col2:
-      st.image(
-          "https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
-          width=54,
-      )
-    
-    st.markdown(
-        """
-        <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
-        <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
-            Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    # Form login otomatis menjadi card container yang membungkus input & tombol secara rapi
-    with st.form("login_form"):
-      username = st.text_input("Username", placeholder="admin or user")
-      password = st.text_input(
-          "Password", type="password", placeholder="Enter password"
-      )
-      submit = st.form_submit_button(
-          "Sign in", type="primary", use_container_width=True
-      )
-      if submit:
-        if (
-            username in USERS
-            and USERS[username]["password"] == password
-        ):
-          st.session_state["authenticated"] = True
-          st.session_state["role"] = USERS[username]["role"]
-          st.session_state["name"] = USERS[username]["name"]
-          st.rerun()
-        else:
-          st.error(
-              "Username or password is incorrect. Please try again."
-          )
-          
-  st.markdown("</div>", unsafe_allow_html=True)
-  st.stop()
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    _, col2, _ = st.columns([1, 1.15, 1])
+    with col2:
+        l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
+        with l_col2:
+            st.image(
+                "https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
+                width=54,
+            )
+
+        st.markdown(
+            """
+            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
+            <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
+                Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="admin or user")
+            password = st.text_input(
+                "Password", type="password", placeholder="Enter password"
+            )
+            submit = st.form_submit_button(
+                "Sign in", type="primary", use_container_width=True
+            )
+            if submit:
+                if (
+                    username in USERS
+                    and USERS[username]["password"] == password
+                ):
+                    st.session_state["authenticated"] = True
+                    st.session_state["role"] = USERS[username]["role"]
+                    st.session_state["name"] = USERS[username]["name"]
+                    st.rerun()
+                else:
+                    st.error(
+                        "Username or password is incorrect. Please try again."
+                    )
+                    
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 # ============================================================
 # NAVIGATION — two top-level sections only. Every sub-page that used
 # to be a separate sidebar button now lives inside a tab within its
