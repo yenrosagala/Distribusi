@@ -97,14 +97,18 @@ if not st.session_state["authenticated"]:
   _, col2, _ = st.columns([1, 1.15, 1])
   with col2:
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    
+    # Fix: Placed image cleanly inside Streamlit columns above title to avoid structural layout clipping
+    l_col1, l_col2, l_col3 = st.columns([1, auto_img := 1, 1])
+    with l_col2:
+      st.image(
+          "https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
+          width=54,
+      )
+
     st.markdown(
         """
-            <div class="brand-block" style="justify-content:center; margin-bottom:14px;">
-                <div class="brand-mark">
-                    <img src="https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png" width="24" style="border-radius:6px;">
-                </div>
-            </div>
-            <h2 style='text-align:center; color:#0F172A; margin:0;'>Dashboard Integrasi Papua</h2>
+            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
             <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
                 Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
             </p>
