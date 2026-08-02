@@ -15,7 +15,7 @@ import modules.admin_page as transportasi_admin
 # ============================================================
 st.set_page_config(
     page_title="Dashboard Integrasi Papua — Pariwisata & Transportasi",
-    page_icon="logo.png",
+    page_icon="https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -129,7 +129,7 @@ with st.sidebar:
     st.markdown(
         """
         <div class="brand-block">
-            <div class="brand-mark">logo.png</div>
+            <div class="brand-mark">https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png</div>
             <div>
                 <p class="sidebar-title">Dashboard Integrasi Papua</p>
                 <p class="sidebar-subtitle">Pariwisata &amp; Transportasi</p>
