@@ -26,21 +26,16 @@ BASE_DIR = Path(__file__).parent
 # ============================================================
 # STYLE INJECTION
 # ============================================================
-
-
 def load_css():
   css_path = BASE_DIR / "style.css"
   if css_path.exists():
     st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
-
 
 load_css()
 
 # ============================================================
 # SHARED DATABASE — single engine for both domains (StaTransportasi's layer)
 # ============================================================
-
-
 @st.cache_resource
 def get_shared_engine():
   engine = get_engine()
@@ -48,22 +43,17 @@ def get_shared_engine():
   init_narrative_table()  # transportasi AI narrative cache
   return engine
 
-
 engine = get_shared_engine()
-
 
 @st.cache_resource
 def get_etl():
   return ETLEngine(engine)
 
-
 etl_engine = get_etl()
-
 
 @st.cache_data
 def load_geodata():
   return gpd.read_parquet(BASE_DIR / "papua_provinces.parquet")
-
 
 try:
   gdf_provinces = load_geodata()
@@ -96,7 +86,7 @@ if not st.session_state["authenticated"]:
   st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
   _, col2, _ = st.columns([1, 1.15, 1])
   with col2:
-    # Open the container card first
+    # Membuka card container di paling atas kolom tengah
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     
     l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
@@ -117,7 +107,7 @@ if not st.session_state["authenticated"]:
     )
     st.divider()
     
-    # Place the form INSIDE the .login-card container block
+    # Form input berada di dalam container .login-card yang sama
     with st.form("login_form"):
       username = st.text_input("Username", placeholder="admin or user")
       password = st.text_input(
@@ -140,7 +130,7 @@ if not st.session_state["authenticated"]:
               "Username or password is incorrect. Please try again."
           )
           
-    # Close the .login-card container div properly after the form
+    # Menutup card container tepat di bawah form agar seluruh elemen masuk ke dalam card
     st.markdown("</div>", unsafe_allow_html=True)
     
   st.markdown("</div>", unsafe_allow_html=True)
