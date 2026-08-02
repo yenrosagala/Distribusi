@@ -354,8 +354,6 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list, gdf_
         "and run system maintenance.</p>",
         unsafe_allow_html=True,
     )
-    st.divider()
-
     uploaded_files = st.file_uploader("Upload Excel Source Files (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
     adm_col1, adm_col2 = st.columns(2)
