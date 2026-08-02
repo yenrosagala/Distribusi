@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+plotly
+geopandas
+pyarrow
+shapely
+sqlalchemy
+psycopg2-binary
+google-genai
+openpyxl
+xlrd
+lxml
+tabulate
+matplotlib
+python-docx>=1.1.0
