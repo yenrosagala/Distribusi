@@ -15,7 +15,7 @@ import modules.admin_page as transportasi_admin
 # ============================================================
 st.set_page_config(
     page_title="Dashboard Integrasi Papua — Pariwisata & Transportasi",
-    page_icon="logo.png"
+    page_icon="logo.png",
     layout="wide",
     initial_sidebar_state="expanded",
 )
