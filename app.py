@@ -96,7 +96,7 @@ if not st.session_state["authenticated"]:
   st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
   _, col2, _ = st.columns([1, 1.15, 1])
   with col2:
-    # Wrap everything including the form inside a single .login-card container block
+    # Open the container card first
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
     
     l_col1, l_col2, l_col3 = st.columns([1, 1, 1])
@@ -117,6 +117,7 @@ if not st.session_state["authenticated"]:
     )
     st.divider()
     
+    # Place the form INSIDE the .login-card container block
     with st.form("login_form"):
       username = st.text_input("Username", placeholder="admin or user")
       password = st.text_input(
@@ -139,7 +140,9 @@ if not st.session_state["authenticated"]:
               "Username or password is incorrect. Please try again."
           )
           
+    # Close the .login-card container div properly after the form
     st.markdown("</div>", unsafe_allow_html=True)
+    
   st.markdown("</div>", unsafe_allow_html=True)
   st.stop()
 
