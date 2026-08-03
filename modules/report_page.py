@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
+def local_css(file_name):
+  with open(file_name) as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+# Call it right after page config or imports
+local_css("style.css")
+
 MONTH_MAP = {'Januari':1, 'Februari':2, 'Maret':3, 'April':4, 'Mei':5, 'Juni':6,
              'Juli':7, 'Agustus':8, 'September':9, 'Oktober':10, 'November':11, 'Desember':12}
 INV_MONTH_MAP = {v: k for k, v in MONTH_MAP.items()}
@@ -603,75 +611,74 @@ def render_tables_and_narratives(all_collected_data):
 
     current_moda = None
     for item in all_collected_data:
-        if current_moda != item['moda']:
-            current_moda = item['moda']
-            icon = "✈️" if current_moda == "Transportasi Udara" else "🚢"
-            st.subheader(f"{icon} Moda: {current_moda}")
+        with st.container(border=True):
+            if current_moda != item['moda']:
+                current_moda = item['moda']
+                icon = "✈️" if current_moda == "Transportasi Udara" else "🚢"
+                st.subheader(f"{icon} Moda: {current_moda}")
 
-        angkutan = "Angkutan Udara" if current_moda == "Transportasi Udara" else "Angkutan Laut"
-        judul = f"Tabel {item['table_no']} Perkembangan {item['label']} {angkutan} Dalam Negeri Provinsi {item['prov']}, {item['bln']} {item['thn']}"
-        st.markdown(f"**{judul}**")
-        st.dataframe(item['styled_df'], width='stretch')
+            angkutan = "Angkutan Udara" if current_moda == "Transportasi Udara" else "Angkutan Laut"
+            judul = f"Tabel {item['table_no']} Perkembangan {item['label']} {angkutan} Dalam Negeri Provinsi {item['prov']}, {item['bln']} {item['thn']}"
+            st.markdown(f"**{judul}**")
+            
+            # Perbaikan agar dataframe ter-render sempurna di dalam card border
+            st.dataframe(item['styled_df'], use_container_width=True)
 
-        region_label = "Bandara" if current_moda == "Transportasi Udara" else "Pelabuhan/Kabupaten"
+            region_label = "Bandara" if current_moda == "Transportasi Udara" else "Pelabuhan/Kabupaten"
 
-        h1, h2 = st.columns([5, 1])
-        with h1:
-            st.markdown(f"**📝 Executive Summary — {item['label']}**")
-        with h2:
-            # Batasi tombol regenerasi hanya untuk role admin
-            if st.session_state.get("role") == "admin":
-                if st.button("🔄 Regenerasi", key=f"regen_report_{item['table_no']}", width='stretch'):
-                    report_type = f"report_{current_moda}_{item['label']}"
-                    period_key = f"{item['prov']}|{item['bln']}|{item['thn']}"
-                    
-                    # Hapus dari database agar dipaksa generate ulang oleh AI
-                    try:
-                        engine = get_engine()
-                        with engine.raw_connection() as conn:
-                            with conn.cursor() as cursor:
-                                cursor.execute(
-                                    "DELETE FROM ai_narratives WHERE report_type = %s AND period_key = %s",
-                                    (report_type, period_key)
-                                )
-                                conn.commit()
-                    except Exception as e:
-                        logger.error("Gagal menghapus cache database saat regenerasi: %s", e)
-                    st.rerun()
+            h1, h2 = st.columns([5, 1])
+            with h1:
+                st.markdown(f"**📝 Executive Summary — {item['label']}**")
+            with h2:
+                if st.session_state.get("role") == "admin":
+                    if st.button("🔄 Regenerasi", key=f"regen_report_{item['table_no']}", use_container_width=True):
+                        report_type = f"report_{current_moda}_{item['label']}"
+                        period_key = f"{item['prov']}|{item['bln']}|{item['thn']}"
+                        
+                        try:
+                            engine = get_engine()
+                            with engine.raw_connection() as conn:
+                                with conn.cursor() as cursor:
+                                    cursor.execute(
+                                        "DELETE FROM ai_narratives WHERE report_type = %s AND period_key = %s",
+                                        (report_type, period_key)
+                                    )
+                                    conn.commit()
+                        except Exception as e:
+                            logger.error("Gagal menghapus cache database saat regenerasi: %s", e)
+                        st.rerun()
 
-        with st.spinner(f"Menyusun Executive Summary untuk {item['label']}..."):
-            text_final, source = generate_single_narrative_ai(
-                item['report_display_brs'].reset_index(), 
-                item['label'], 
-                item['prov'], 
-                current_moda, 
-                item['bln'], 
-                item['thn'], 
-                item['prev_bln'], 
-                item['prev_thn']
-            )
+            with st.spinner(f"Menyusun Executive Summary untuk {item['label']}..."):
+                text_final, source = generate_single_narrative_ai(
+                    item['report_display_brs'].reset_index(), 
+                    item['label'], 
+                    item['prov'], 
+                    current_moda, 
+                    item['bln'], 
+                    item['thn'], 
+                    item['prev_bln'], 
+                    item['prev_thn']
+                )
 
-        if text_final:
-            p1, p2 = parse_two_paragraphs(text_final)
-            p1_text = f"*(Executive Summary - [{source}])*\n\n{p1}" if p1 else ""
-            p2_text = p2 if p2 else ""
-        else:
-            p1, p2 = generate_narrative_fallback(
-                report_flat=item['report_flat'], col_target=item['col_target'], moda=current_moda,
-                region_label=region_label, bln=item['bln'], thn=item['thn'], prev_bln=item['prev_bln'],
-                prev_thn=item['prev_thn'], col_prev=item['col_prev'], col_curr=item['col_curr'],
-                col_cum_prev=item['col_cum_prev'], col_cum_curr=item['col_cum_curr'], prov=item['prov']
-            )
-            p1_text = f"*(Executive Summary - Sistem Fallback)*\n\n{p1}"
-            p2_text = p2
+            if text_final:
+                p1, p2 = parse_two_paragraphs(text_final)
+                p1_text = f"*(Executive Summary - [{source}])*\n\n{p1}" if p1 else ""
+                p2_text = p2 if p2 else ""
+            else:
+                p1, p2 = generate_narrative_fallback(
+                    report_flat=item['report_flat'], col_target=item['col_target'], moda=current_moda,
+                    region_label=region_label, bln=item['bln'], thn=item['thn'], prev_bln=item['prev_bln'],
+                    prev_thn=item['prev_thn'], col_prev=item['col_prev'], col_curr=item['col_curr'],
+                    col_cum_prev=item['col_cum_prev'], col_cum_curr=item['col_cum_curr'], prov=item['prov']
+                )
+                p1_text = f"*(Executive Summary - Sistem Fallback)*\n\n{p1}"
+                p2_text = p2
 
-        if p1_text: st.markdown(p1_text)
-        if p2_text: st.markdown(p2_text)
-        
-        item['p1'] = p1_text
-        item['p2'] = p2_text
-
-        st.markdown("---")
+            if p1_text: st.markdown(p1_text)
+            if p2_text: st.markdown(p2_text)
+            
+            item['p1'] = p1_text
+            item['p2'] = p2_text
 
 def show_report_page():
     st.title("📋 Laporan Komparatif Strategis")
