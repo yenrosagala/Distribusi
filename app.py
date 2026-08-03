@@ -15,7 +15,7 @@ from pariwisata.etl_engine import ETLEngine
 # PAGE CONFIG  (UI/UX shell — from dash-pariwisata)
 # ============================================================
 st.set_page_config(
-    page_title="Dashboard Integrasi Papua — Pariwisata & Transportasi",
+    page_title="Statistik Distribusi Papua",
     page_icon="https://raw.githubusercontent.com/yenrosagala/Distribusi/main/logo.png",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -95,7 +95,7 @@ if not st.session_state["authenticated"]:
 
         st.markdown(
             """
-            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard Integrasi Papua</h2>
+            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard <br> Statistik Distribusi & Jasa <br> BPS Papua</h2>
             <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
                 Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
             </p>
@@ -109,7 +109,7 @@ if not st.session_state["authenticated"]:
                 "Password", type="password", placeholder="Enter password"
             )
             submit = st.form_submit_button(
-                "Sign in", type="primary", use_container_width=True
+                "Sign in", type="primary", width='stretch'
             )
             if submit:
                 if (
@@ -161,7 +161,7 @@ with st.sidebar:
   with col_brand2:
     st.markdown(
         """
-            <p class="sidebar-title" style="margin:0;">Dashboard Integrasi Papua</p>
+            <p class="sidebar-title" style="margin:0;">Dashboard <br> Statistik Distribusi & Jasa <br> BPS Papua</p>
             <p class="sidebar-subtitle" style="margin:0;">Pariwisata &amp; Transportasi</p>
             """,
         unsafe_allow_html=True,
@@ -173,7 +173,7 @@ with st.sidebar:
     active = st.session_state["section"] == sec["id"]
     if st.button(
         f"{sec['icon']}  {sec['title']}",
-        use_container_width=True,
+        width='stretch',
         key=f"nav_{sec['id']}",
         type="primary" if active else "secondary",
     ):
@@ -206,7 +206,7 @@ with st.sidebar:
       unsafe_allow_html=True,
   )
   st.markdown("<br>", unsafe_allow_html=True)
-  if st.button("Log out", use_container_width=True):
+  if st.button("Log out", width='stretch'):
     st.session_state["authenticated"] = False
     st.rerun()
 
@@ -298,7 +298,7 @@ elif section == "transportasi":
 # FOOTER
 # ============================================================
 st.markdown(
-    '<p class="app-footer">Dashboard Integrasi Papua · Pariwisata (BPS hotel occupancy matrices) '
+    '<p class="app-footer">Dashboard Statistik Distribusi & Jasa BPS Papua · Pariwisata (BPS hotel occupancy matrices) '
     "&amp; Transportasi (BPS transport laut/udara) — data bersumber dari BPS Provinsi Papua</p>",
     unsafe_allow_html=True,
 )
