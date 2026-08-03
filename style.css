@@ -294,3 +294,86 @@ hr{ border-color: var(--line) !important; }
 [data-testid="stTabs"] [data-baseweb="tab"] {
     transition: color 0.15s ease, background-color 0.15s ease;
 }
+
+/* Global background & font styling */
+    .stApp {
+        background-color: #f8fafc;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Modern Card Containers */
+    div.stContainer, div[data-testid="stExpander"], div.element-container {
+        background-color: #ffffff;
+        border-radius: 12px;
+    }
+    
+    /* Elevate Primary Buttons */
+    div.stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.6rem 1.2rem;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+        transition: all 0.3s ease;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
+        transform: translateY(-1px);
+    }
+
+    /* Secondary Buttons */
+    div.stButton > button:not([kind="primary"]) {
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        font-weight: 500;
+        color: #334155;
+        background-color: #ffffff;
+    }
+    div.stButton > button:not([kind="primary"]):hover {
+        background-color: #f1f5f9;
+        border-color: #94a3b8;
+    }
+
+    /* File Uploader Box Styling */
+    div[data-testid="stFileUploader"] {
+        border: 2px dashed #cbd5e1;
+        border-radius: 12px;
+        padding: 1.5rem;
+        background-color: #ffffff;
+        text-align: center;
+    }
+    div[data-testid="stFileUploader"]:hover {
+        border-color: #2563eb;
+        background-color: #f8fafc;
+    }
+
+    /* Metric Card Polish */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        padding: 1rem;
+        border-radius: 10px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    
+    /* Tabs Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #f1f5f9;
+        padding: 6px;
+        border-radius: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        color: #475569;
+        font-weight: 600;
+        padding: 8px 16px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #ffffff !important;
+        color: #2563eb !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
