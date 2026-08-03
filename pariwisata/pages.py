@@ -136,31 +136,24 @@ def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list,
             f"{df_latest['rlmtgab'].iloc[0]:.1f} malam" if pd.notna(df_latest['rlmtgab'].iloc[0]) else "—",
         )
 
-        card_open("Data Coverage")
-        st.write(f"Records span **{month_name(month_list[0])} {year_list[0]}** through "
-                 f"**{month_name(month_list[-1])} {year_list[-1]}**, covering "
-                 f"{len(prov_list)} province(s) and Hotel Bintang / Non Bintang classifications.")
-        st.caption("Use the sidebar to jump to the Infographic map, trend charts, or the AI-narrated report.")
-        card_close()
+        with st.container(border=True):
+            st.markdown("### Data Coverage")
+            st.write(f"Records span **{month_name(month_list[0])} {year_list[0]}** through "
+                     f"**{month_name(month_list[-1])} {year_list[-1]}**, covering "
+                     f"{len(prov_list)} province(s) and Hotel Bintang / Non Bintang classifications.")
+            st.caption("Use the sidebar to jump to the Infographic map, trend charts, or the AI-narrated report.")
     else:
-        card_open()
-        st.info(
-            "No data has been ingested yet. If you're an admin, head to **Admin ETL Uploads** "
-            "in the sidebar to load the first Excel matrix."
-        )
-        card_close()
+        with st.container(border=True):
+            st.info(
+                "No data has been ingested yet. If you're an admin, head to **Admin ETL Uploads** "
+                "in the sidebar to load the first Excel matrix."
+            )
 
 
 # ============================================================
 # PAGE — INFOGRAPHIC STAT MAP
 # ============================================================
 def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
-    st.markdown('<div class="search-bar">', unsafe_allow_html=True)
-    search_term = st.text_input(
-        "Search", placeholder="🔍 Search a province…", label_visibility="collapsed"
-    )
-    st.markdown("</div><br>", unsafe_allow_html=True)
-
     st.markdown('<div class="filter-pill">', unsafe_allow_html=True)
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
@@ -198,12 +191,11 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
             )
 
         if df_infographic.empty:
-            card_open()
-            st.info(
-                "No records match this period yet. Try a different month/year, or ask an "
-                "admin to ingest data for this range in **Admin ETL Uploads**."
-            )
-            card_close()
+            with st.container(border=True):
+                st.info(
+                    "No records match this period yet. Try a different month/year, or ask an "
+                    "admin to ingest data for this range in **Admin ETL Uploads**."
+                )
         else:
             df_cur = df_infographic[(df_infographic["year"] == map_year) & (df_infographic["month"] == map_month)]
             df_prev = df_infographic[(df_infographic["year"] == prev_year) & (df_infographic["month"] == prev_month)]
@@ -211,8 +203,8 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
             period_label = f"{month_name(map_month)} {map_year}"
             st.markdown(f'<div class="hero-title">Papua Regional Performance — {period_label}</div>', unsafe_allow_html=True)
 
-            left_provs = [p for p in LEFT_PROVINCES if not search_term or search_term.lower() in p.lower()]
-            right_provs = [p for p in RIGHT_PROVINCES if not search_term or search_term.lower() in p.lower()]
+            left_provs = LEFT_PROVINCES
+            right_provs = RIGHT_PROVINCES
 
             col_left, col_map, col_right = st.columns([1.1, 2.2, 1.1])
 
@@ -249,13 +241,11 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
                     fig_map.update_layout(showlegend=False, coloraxis_colorbar=dict(title="val", tickfont=dict(color="#F1F5F9")))
                     plotly_theme(fig_map, height=460, dark=True)
 
-                    st.markdown('<div class="map-panel">', unsafe_allow_html=True)
-                    st.plotly_chart(fig_map, use_container_width=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.plotly_chart(fig_map, use_container_width=True)
                 else:
-                    card_open()
-                    st.warning("Map geometry file (papua_provinces.parquet) could not be loaded.")
-                    card_close()
+                    with st.container(border=True):
+                        st.warning("Map geometry file (papua_provinces.parquet) could not be loaded.")
 
                 csv_data = df_cur.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -287,6 +277,7 @@ def render_trends(etl_engine, df_info, prov_list, year_list, month_list, gdf_pro
     st.markdown("</div>", unsafe_allow_html=True)
 
     if viz_prov and viz_year and viz_month:
+        # 1. Fetch trend data across the whole year for line charts
         trend_query = text(f"""
             SELECT jenis_akomodasi, month, AVG(tpk) as tpk, AVG(rlmtgab) as rlmtgab
             FROM {etl_engine.general_table_name}
@@ -297,32 +288,92 @@ def render_trends(etl_engine, df_info, prov_list, year_list, month_list, gdf_pro
         with etl_engine.engine.connect() as conn:
             df_agg = pd.read_sql_query(trend_query, conn, params={"prov": viz_prov, "year": viz_year})
 
+        # 2. Determine previous month and year for comparison
+        prev_month = viz_month - 1
+        prev_year = viz_year
+        if prev_month < 1:
+            prev_month = 12
+            prev_year = viz_year - 1
+
+        comp_query = text(f"""
+            SELECT jenis_akomodasi, month, year, AVG(tpk) as tpk, AVG(rlmtgab) as rlmtgab
+            FROM {etl_engine.general_table_name}
+            WHERE kd_prov = :prov AND ((year = :year AND month = :month) OR (year = :prev_year AND month = :prev_month))
+            GROUP BY jenis_akomodasi, month, year
+            ORDER BY year, month
+        """)
+        with etl_engine.engine.connect() as conn:
+            df_comp = pd.read_sql_query(
+                comp_query, 
+                conn, 
+                params={"prov": viz_prov, "year": viz_year, "month": viz_month, "prev_year": prev_year, "prev_month": prev_month}
+            )
+
         if not df_agg.empty:
             for jenis in df_agg["jenis_akomodasi"].unique():
-                sub_df = df_agg[df_agg["jenis_akomodasi"] == jenis]
+                sub_df = df_agg[df_agg["jenis_akomodasi"] == jenis].copy()
+                
+                # Convert numerical month (e.g., 4, 5, 6) to readable month names so X-axis avoids decimals
+                sub_df["month_name"] = sub_df["month"].apply(month_name)
+                
                 df_melted = sub_df.melt(
-                    id_vars=["month"], value_vars=["tpk", "rlmtgab"], var_name="Indicator", value_name="Value"
+                    id_vars=["month_name"], value_vars=["tpk", "rlmtgab"], var_name="Indicator", value_name="Value"
                 )
                 df_melted["Indicator"] = df_melted["Indicator"].replace(
                     {"tpk": "TPK (Occupancy Rate)", "rlmtgab": "RLMTGAB (Length of Stay)"}
                 )
-                fig = px.line(
-                    df_melted, x="month", y="Value", color="Indicator", markers=True,
+                
+                fig_line = px.line(
+                    df_melted, x="month_name", y="Value", color="Indicator", markers=True,
                     color_discrete_map={"TPK (Occupancy Rate)": PRIMARY, "RLMTGAB (Length of Stay)": "#334155"},
+                    title=None  # Explicitly prevents the "undefined" title block
                 )
-                fig.update_traces(line=dict(width=3), marker=dict(size=8))
-                plotly_theme(fig, height=380)
+                fig_line.update_traces(line=dict(width=3), marker=dict(size=8))
+                
+                # Fix axis labels readability & styling override
+                fig_line.update_layout(
+                    xaxis_title="Month",
+                    yaxis_title="Metric Value",
+                    font=dict(family="Inter, sans-serif", color="#0F172A"),
+                    xaxis=dict(showgrid=False, color="#64748B"),
+                    yaxis=dict(showgrid=True, gridcolor="#E2E8F0", color="#64748B")
+                )
+                
+                plotly_theme(fig_line, height=380)
 
-                card_open(f"Monthly Performance — {jenis}", f"{viz_prov} · {viz_year}")
-                st.plotly_chart(fig, use_container_width=True)
-                card_close()
+                with st.container(border=True):
+                    st.markdown(f"### Monthly Performance — {jenis}")
+                    st.caption(f"{viz_prov} · {viz_year}")
+                    st.plotly_chart(fig_line, width='stretch')
+                    
+                # Bar chart for current month vs previous month comparison
+                sub_comp = df_comp[df_comp["jenis_akomodasi"] == jenis]
+                if not sub_comp.empty:
+                    sub_comp["Period Label"] = sub_comp.apply(lambda row: f"{month_name(int(row['month']))} {int(row['year'])}", axis=1)
+                    df_bar_melted = sub_comp.melt(
+                        id_vars=["Period Label"], value_vars=["tpk", "rlmtgab"], var_name="Indicator", value_name="Value"
+                    )
+                    df_bar_melted["Indicator"] = df_bar_melted["Indicator"].replace(
+                        {"tpk": "TPK (Occupancy Rate)", "rlmtgab": "RLMTGAB (Length of Stay)"}
+                    )
+                    fig_bar = px.bar(
+                        df_bar_melted, x="Indicator", y="Value", color="Period Label", barmode="group",
+                        color_discrete_sequence=[PRIMARY, "#334155"],
+                        title=f"Comparison: {month_name(viz_month)} {viz_year} vs Previous Month"
+                    )
+                    plotly_theme(fig_bar, height=340)
+
+                    with st.container(border=True):
+                        st.caption(f"{viz_prov} · {jenis}")
+                        st.plotly_chart(fig_bar, width='stretch')
         else:
-            card_open()
-            st.info("No trend data found for this province and year yet.")
-            card_close()
+            with st.container(border=True):
+                st.info("No trend data found for this province and year yet.")
+    else:
+        with st.container(border=True):
+            st.info("Please select a province, year, and month to view trends and comparisons.")
 
-
-# ============================================================
+## ============================================================
 # PAGE — REPORT
 # ============================================================
 def render_report(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
@@ -338,11 +389,9 @@ def render_report(etl_engine, df_info, prov_list, year_list, month_list, gdf_pro
     st.markdown("</div>", unsafe_allow_html=True)
 
     if rep_prov and rep_year and rep_month:
-        card_open()
-        generate_akomodasi_tables(etl_engine, rep_prov, rep_year, rep_month)
-        card_close()
-
-
+        with st.container(border=True):
+            generate_akomodasi_tables(etl_engine, rep_prov, rep_year, rep_month)
+            
 # ============================================================
 # PAGE — ADMIN ETL UPLOADS
 # ============================================================
@@ -354,6 +403,8 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list, gdf_
         "and run system maintenance.</p>",
         unsafe_allow_html=True,
     )
+    st.divider()
+
     uploaded_files = st.file_uploader("Upload Excel Source Files (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
     adm_col1, adm_col2 = st.columns(2)
