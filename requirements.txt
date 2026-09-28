@@ -6,7 +6,7 @@ geopandas
 pyarrow
 shapely
 sqlalchemy
-psycopg2-binary
+
 google-genai
 openpyxl
 xlrd
