@@ -239,8 +239,8 @@ def format_id_number(x, decimals=2):
 NARRATIVE_META = {
     'penumpang_datang':      {'subject': 'Jumlah penumpang yang datang', 'satuan': 'orang', 'is_penumpang': True},
     'penumpang_berangkat':   {'subject': 'Jumlah penumpang yang berangkat', 'satuan': 'orang', 'is_penumpang': True},
-    'barang_bongkar_kg':     {'subject': 'Volume barang yang dibongkar', 'satuan': 'kg', 'is_penumpang': False},
-    'barang_muat_kg':        {'subject': 'Volume barang yang dimuat', 'satuan': 'kg', 'is_penumpang': False},
+    'barang_bongkar_kg':     {'subject': 'Volume barang yang dibongkar', 'satuan': 'ton', 'is_penumpang': False},
+    'barang_muat_kg':        {'subject': 'Volume barang yang dimuat', 'satuan': 'ton', 'is_penumpang': False},
     'barang_bongkar_ton':    {'subject': 'Volume barang yang dibongkar', 'satuan': 'ton', 'is_penumpang': False},
     'barang_muat_ton':       {'subject': 'Volume barang yang dimuat', 'satuan': 'ton', 'is_penumpang': False},
     'dn_penumpang_turun':    {'subject': 'Jumlah penumpang yang datang', 'satuan': 'orang', 'is_penumpang': True},
@@ -525,8 +525,8 @@ def create_complete_master_word_report(prov, thn, bln, all_report_data):
 
 def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, label, row_col, thn, bln, prev_bln, prev_thn, table_no=None, prov=None, moda=None):
     divisor = 1.0
-    if prov == "Papua Tengah" and moda == "Transportasi Udara" and "kg" in col_target.lower():
-        divisor = 1000.0
+    if moda == "Transportasi Udara" and "kg" in col_target.lower():
+        divisor = 1000.0  # kg -> ton (semua provinsi)
 
     curr_grp = df_curr.groupby(row_col)[col_target].sum() / divisor
     prev_grp = df_prev.groupby(row_col)[col_target].sum() / divisor
@@ -705,8 +705,8 @@ def show_report_page():
                 if not df_cu.empty:
                     targets_udara = [
                         ('penumpang_datang', 'Penumpang Datang'), ('penumpang_berangkat', 'Penumpang Berangkat'),
-                        ('barang_bongkar_kg', 'Barang Bongkar (Ton)' if prov == "Papua Tengah" else 'Barang Bongkar (Kg)'), 
-                        ('barang_muat_kg', 'Barang Muat (Ton)' if prov == "Papua Tengah" else 'Barang Muat (Kg)')
+                        ('barang_bongkar_kg', 'Barang Bongkar (Ton)'), 
+                        ('barang_muat_kg', 'Barang Muat (Ton)')
                     ]
                     for col, label in targets_udara:
                         item = prepare_table_item(df_cu, df_pr, df_cc, df_cp, col, label, 'nama_bandara', thn, bln, p_bln, p_thn, table_no=global_table_counter, prov=prov, moda=moda_udara)
@@ -744,8 +744,8 @@ def show_report_page():
             if not df_cu.empty:
                 targets_udara = [
                     ('penumpang_datang', 'Penumpang Datang'), ('penumpang_berangkat', 'Penumpang Berangkat'),
-                    ('barang_bongkar_kg', 'Barang Bongkar (Ton)' if prov == "Papua Tengah" else 'Barang Bongkar (Kg)'), 
-                    ('barang_muat_kg', 'Barang Muat (Ton)' if prov == "Papua Tengah" else 'Barang Muat (Kg)')
+                    ('barang_bongkar_kg', 'Barang Bongkar (Ton)'), 
+                    ('barang_muat_kg', 'Barang Muat (Ton)')
                 ]
                 for col, label in targets_udara:
                     item = prepare_table_item(df_cu, df_pr, df_cc, df_cp, col, label, 'nama_bandara', thn, bln, p_bln, p_thn, table_no=global_table_counter, prov=prov, moda=moda_udara)
