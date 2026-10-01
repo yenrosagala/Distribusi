@@ -6,19 +6,21 @@ import streamlit as st
 from google import genai
 from sqlalchemy import text
 
+from modules.config import read_secret
+
 
 def get_gemini_client():
     # 1. Try fetching from Streamlit secrets list first
     api_keys = []
-    try:
-        if "GEMINI_API_KEYS" in st.secrets:
-            api_keys = list(st.secrets["GEMINI_API_KEYS"])
-    except Exception:
-        pass
+    raw = read_secret("GEMINI_API_KEYS")
+    if isinstance(raw, str):
+        api_keys = [raw]
+    elif raw:
+        api_keys = list(raw)
 
     # 2. Fallback to single environment variable or secrets if list is empty
     if not api_keys:
-        env_key = os.getenv('GEMINI_API_KEY') or st.secrets.get('GEMINI_API_KEY')
+        env_key = os.getenv('GEMINI_API_KEY') or read_secret('GEMINI_API_KEY')
         if env_key:
             api_keys = [env_key]
 
@@ -208,5 +210,5 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month):
                 else:
                     st.info('AI narrative skipped (Gemini client unconfigured).')
 
-            st.dataframe(final_table, use_container_width=True)
+            st.dataframe(final_table, width='stretch')
             st.markdown('</div>', unsafe_allow_html=True)

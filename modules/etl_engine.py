@@ -106,6 +106,16 @@ def parse_transport_file(file_content, tahun, bulan):
         raise ValueError('Format header tabel tidak dikenali!')
 
     df['nama_provinsi'] = df['nama_kabkota'].apply(get_province_by_kabupaten)
+    # ponytail: reject the whole file if any kabupaten can't be attributed to a
+    # province — importing it under a wrong default would corrupt that province's
+    # totals and every narrative derived from them.
+    unknown = df.loc[df['nama_provinsi'].isna(), 'nama_kabkota'].dropna().unique()
+    if len(unknown):
+        raise ValueError(
+            "Kabupaten tidak ditemukan di PEMETAAN_WILAYAH: "
+            + ", ".join(sorted(str(k) for k in unknown))
+            + ". Tambahkan ke modules/config.py lalu unggah ulang."
+        )
     return table_type, df
 
 def process_laut(df_raw, tahun, bulan):

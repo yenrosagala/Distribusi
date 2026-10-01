@@ -1,11 +1,10 @@
-import random
 import logging
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from sqlalchemy import text
 from google import genai
-from modules.database import get_engine
+from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -29,12 +28,17 @@ def format_id_number(x, decimals=2):
 
 
 def _arah_dinamis(pct):
+    # Same deterministic wording as report_page: a number's direction is a fact.
     if pd.isna(pct):
         return "tercatat"
+    if pct >= 10:
+        return "mengalami lonjakan"
     if pct > 0:
-        return random.choice(["mengalami lonjakan", "naik", "meningkat", "mengalami pertumbuhan"])
-    elif pct < 0:
-        return random.choice(["terkoreksi", "turun", "mengalami penurunan", "menyusut"])
+        return "meningkat"
+    if pct <= -10:
+        return "mengalami penurunan tajam"
+    if pct < 0:
+        return "menurun"
     return "stabil"
 
 
@@ -80,45 +84,6 @@ MONTH_ABBR = {'Januari': 'Jan', 'Februari': 'Feb', 'Maret': 'Mar', 'April': 'Apr
               'Juli': 'Jul', 'Agustus': 'Agt', 'September': 'Sep', 'Oktober': 'Okt', 'November': 'Nov', 'Desember': 'Des'}
 
 PROVINSI_ORDER = ['Papua', 'Papua Selatan', 'Papua Tengah', 'Papua Pegunungan']
-
-
-# ==============================================================================
-# DATABASE RETRIEVE & SAVE HELPERS UNTUK DASHBOARD
-# ==============================================================================
-def get_db_narrative(report_type, period_key):
-    try:
-        engine = get_engine()
-        with engine.raw_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT narrative_text FROM ai_narratives WHERE report_type = %s AND period_key = %s",
-                    (report_type, period_key)
-                )
-                result = cursor.fetchone()
-                if result:
-                    return result[0]
-    except Exception as e:
-        logger.warning("Gagal retrieve narasi dashboard dari database: %s", e)
-    return None
-
-
-def save_db_narrative(report_type, period_key, narrative_text):
-    try:
-        engine = get_engine()
-        with engine.raw_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO ai_narratives (report_type, period_key, narrative_text, created_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (report_type, period_key) 
-                    DO UPDATE SET narrative_text = EXCLUDED.narrative_text, created_at = CURRENT_TIMESTAMP
-                    """,
-                    (report_type, period_key, narrative_text)
-                )
-                conn.commit()
-    except Exception as e:
-        logger.error("Gagal menyimpan narasi dashboard ke database: %s", e)
 
 
 # ==============================================================================
@@ -388,16 +353,7 @@ def render_section_narrative(moda_nama, table, engine, cols_penumpang, cols_bara
         # Tombol Regenerasi hanya di-enable jika admin sudah login
         if st.session_state.get('admin_logged_in', False):
             if st.button("🔄 Regenerasi", key=f"regen_{table}_{thn}_{bln}", width='stretch'):
-                try:
-                    with engine.raw_connection() as conn:
-                        with conn.cursor() as cursor:
-                            cursor.execute(
-                                "DELETE FROM ai_narratives WHERE report_type = %s AND period_key = %s",
-                                (report_type, period_key)
-                            )
-                            conn.commit()
-                except Exception as e:
-                    logger.error("Gagal menghapus cache database dashboard: %s", e)
+                delete_db_narrative(report_type, period_key)
                 st.rerun()
 
     st.markdown(para1)
@@ -476,7 +432,12 @@ def show_dashboard_page():
     period_labels = [f"{b} {t}" for t, b in periods]
 
     with st.expander("⚙️ Filter Periode", expanded=True):
-        selected = st.selectbox("Pilih Periode (Bulan & Tahun)", period_labels, index=len(period_labels) - 1)
+        selected = st.selectbox(
+        "Pilih Periode (Bulan & Tahun)",
+        period_labels,
+        index=len(period_labels) - 1,
+        help="Periode data yang ditampilkan pada tabel dan grafik.",
+    )
 
     sel_bln = selected.split(" ")[0]
     sel_thn = int(selected.split(" ")[1])
@@ -511,7 +472,13 @@ def show_dashboard_page():
     st.markdown("---")
 
     with st.expander("📋 Lihat Data Detail Mentah", expanded=False):
-        moda_detail = st.radio("Moda", ["Transportasi Laut", "Transportasi Udara"], horizontal=True, key="detail_moda")
+        moda_detail = st.radio(
+        "Moda",
+        ["Transportasi Laut", "Transportasi Udara"],
+        horizontal=True,
+        key="detail_moda",
+        help="Pilih moda yang ingin dilihat rinciannya.",
+    )
         table_detail = "transportasi_laut" if moda_detail == "Transportasi Laut" else "transportasi_udara"
         df_detail = load_period_data(engine, table_detail, sel_thn, sel_bln)
         st.dataframe(df_detail, width='stretch')

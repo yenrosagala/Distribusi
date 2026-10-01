@@ -9,20 +9,15 @@ import time
 import logging
 from google import genai
 from sqlalchemy import text
-from modules.database import get_engine
-from modules.config import PEMETAAN_WILAYAH
+from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
+from modules.config import PEMETAAN_WILAYAH, get_location_metadata
+from modules.indesign_export import fill_brs_template, DEFAULT_TEMPLATE as DEFAULT_IDML_TEMPLATE
+from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
-
-def local_css(file_name):
-  with open(file_name) as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-
-# Call it right after page config or imports
-local_css("style.css")
 
 MONTH_MAP = {'Januari':1, 'Februari':2, 'Maret':3, 'April':4, 'Mei':5, 'Juni':6,
              'Juli':7, 'Agustus':8, 'September':9, 'Oktober':10, 'November':11, 'Desember':12}
@@ -184,14 +179,17 @@ def build_brs_display_table(report_flat, prov, moda):
     col_prev, col_curr = raw_cols[0], raw_cols[1]
     col_cum_prev, col_cum_curr = raw_cols[2], raw_cols[3]
     
-    prev_vals_res = res[col_prev].values
-    curr_vals_res = res[col_curr].values
+    # float cast: kolom hasil agregasi bisa bertipe object/nullable, dan pada dtype
+    # itu 0 / 0 memanggil operator Python -> ZeroDivisionError yang tidak bisa
+    # ditekan np.errstate (hanya berlaku untuk operasi numpy-native).
+    prev_vals_res = res[col_prev].values.astype(float)
+    curr_vals_res = res[col_curr].values.astype(float)
     with np.errstate(divide='ignore', invalid='ignore'):
         mtm_res = np.where(prev_vals_res == 0, np.nan, ((curr_vals_res - prev_vals_res) / prev_vals_res) * 100)
     res['M-to-M (%)'] = pd.Series(mtm_res, index=res.index).replace([np.inf, -np.inf], np.nan)
     
-    cum_prev_vals_res = res[col_cum_prev].values
-    cum_curr_vals_res = res[col_cum_curr].values
+    cum_prev_vals_res = res[col_cum_prev].values.astype(float)
+    cum_curr_vals_res = res[col_cum_curr].values.astype(float)
     with np.errstate(divide='ignore', invalid='ignore'):
         yoy_res = np.where(cum_prev_vals_res == 0, np.nan, ((cum_curr_vals_res - cum_prev_vals_res) / cum_prev_vals_res) * 100)
     res['Y-on-Y (%)'] = pd.Series(yoy_res, index=res.index).replace([np.inf, -np.inf], np.nan)
@@ -249,10 +247,92 @@ NARRATIVE_META = {
     'dn_muat_barang_ton':    {'subject': 'Volume barang yang dimuat', 'satuan': 'ton', 'is_penumpang': False},
 }
 
+# Desimal mengikuti satuan, sama seperti yang dipakai fill_brs_template()
+# (TABLE_STORIES dec=0 untuk kolom Orang, dec=2 untuk kolom ton).
+_SATUAN_DESIMAL = {'orang': 0, 'ton': 2, 'persen': 2}
+
+def table_formatters(columns, col_target):
+    """{kolom: formatter} untuk Styler.
+
+    Sebelumnya satu `styler.format(format_id_number)` applies ke semua kolom,
+    jadi kolom penumpang di web tampil "47.526,00" sementara .idml "47.526".
+    Kolom (%) selalu 2 desimal, apa pun satuannya.
+    """
+    satuan = NARRATIVE_META.get(col_target, {}).get('satuan', 'ton')
+
+    # factory, bukan lambda di dalam dict comprehension: comprehension cuma punya
+    # satu sel untuk `c`, jadi semua lambda-nya lihat kolom terakhir dan tiap
+    # kolom dapat desimal yang sama.
+    def make(col):
+        dec = 2 if '(%)' in str(col) else _SATUAN_DESIMAL.get(satuan, 2)
+        return lambda x: format_id_number(x, dec)
+
+    return {c: make(c) for c in columns}
+
+# Angka gaya Indonesia ("7.778,45") atau gaya Inggris ("5.5"). Lookaround-nya
+# wajib: tanpa itu "3286.296" akan kena mulai digit ketiga -> "286.296".
+_NUM_TOK = r"(?<![\d.,])(?:-?\d{1,3}(?:\.\d{3})+(?:,\d+)?|-?\d+(?:[.,]\d+)?)(?![\d])"
+_NUM_UNIT = re.compile(
+    r"(" + _NUM_TOK + r")\s*(%|(?:orang|penumpang|ton|persen)\b)", re.IGNORECASE
+)
+# Angka bertanda desimal yang tidak menempel kata satuan ("dari 4.318,20 menjadi").
+# Lookahead 'persen' supaya hasil pass pertama tidak jadi "10 persen" di laporan
+# penumpang.
+_NUM_LOOSE = re.compile(r"(?<![\d.,])(-?\d{1,3}(?:\.\d{3})*,\d+)(?![\d])(?!\s*persen\b)")
+
+def _to_float_id(tok):
+    """'7.778,45' -> 7778.45 (Indonesia) ; '47526.0' -> 47526.0 (Inggris).
+
+    Titik hanya pemisah ribuan kalau HOL nya 3 digit dan tidak ada koma. Tanpa
+    aturan ini "47526.0" jadi 475260 karena titiknya dihapus sebagai ribuan.
+    """
+    if ',' in tok:
+        return float(tok.replace('.', '').replace(',', '.'))
+    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', tok):
+        return float(tok.replace('.', ''))
+    return float(tok)
+
+def normalize_narrative(text, col_target=None):
+    """Bikin angka narasi sama persis formatnya dengan tabel.
+
+    Narasi dari Gemini lalu di-cache di DB, jadi jumlah desimalnya bebas: model
+    menulis "65.352,1 ton" sementara tabel "65.352,10", dan menulis "10,27%"
+    sementara narasi fallback memakai kata "persen". Runs sekali sebelum narasi
+    masuk ke preview web maupun .idml, jadi keduanya tidak bisa berbeda lagi.
+
+    Angka bulat tanpa kata satuan sengaja dibiarkan: "3 maskapai" atau
+    "2 Simulator" tidak boleh jadi "3,00". Kalau model menulis desimal di
+    sana ("4.318,20"), desimalnya ikut satuan tabel karena saat itu sudah
+    jelas bukan bilangan bulat.
+    """
+    if not text:
+        return text
+
+    default_dec = _SATUAN_DESIMAL.get(NARRATIVE_META.get(col_target, {}).get('satuan', 'ton'), 2)
+
+    def repl(m):
+        val = _to_float_id(m.group(1))
+        if val is None:
+            return m.group(0)
+        unit = m.group(2)
+        dec = 2 if unit == '%' else _SATUAN_DESIMAL.get(unit.lower(), default_dec)
+        label = 'persen' if unit == '%' else m.group(2)
+        return f"{format_id_number(val, dec)} {label}"
+
+    out = _NUM_UNIT.sub(repl, text)
+    return _NUM_LOOSE.sub(
+        lambda m: format_id_number(_to_float_id(m.group(1)), default_dec), out
+    )
+
 def _arah_dinamis(pct):
+    # ponytail: the direction of a number is a fact, not a style choice. This used
+    # random.choice, so the same +0.3% could be printed as "mengalami lonjakan" on
+    # one run and "naik" on the next. Threshold is the only tunable here.
     if pd.isna(pct): return "tercatat"
-    if pct > 0: return random.choice(["mengalami lonjakan", "naik", "meningkat", "mengalami pertumbuhan"])
-    elif pct < 0: return random.choice(["terkoreksi", "turun", "mengalami penurunan", "menyusut"])
+    if pct >= 10: return "mengalami lonjakan"
+    if pct > 0: return "meningkat"
+    if pct <= -10: return "mengalami penurunan tajam"
+    if pct < 0: return "menurun"
     return "stabil"
 
 def get_gemini_api_keys():
@@ -293,42 +373,6 @@ def parse_two_paragraphs(text):
     if len(parts) == 1: return parts[0], ""
     return None, None
 
-# ==============================================================================
-# DATABASE RETRIEVE & SAVE HELPERS
-# ==============================================================================
-def get_db_narrative(report_type, period_key):
-    try:
-        engine = get_engine()
-        with engine.raw_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "SELECT narrative_text FROM ai_narratives WHERE report_type = %s AND period_key = %s",
-                    (report_type, period_key)
-                )
-                result = cursor.fetchone()
-                if result:
-                    return result[0]
-    except Exception as e:
-        logger.warning("Gagal mengambil narasi dari database: %s", e)
-    return None
-
-def save_db_narrative(report_type, period_key, narrative_text):
-    try:
-        engine = get_engine()
-        with engine.raw_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO ai_narratives (report_type, period_key, narrative_text, created_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (report_type, period_key) 
-                    DO UPDATE SET narrative_text = EXCLUDED.narrative_text, created_at = CURRENT_TIMESTAMP
-                    """,
-                    (report_type, period_key, narrative_text)
-                )
-                conn.commit()
-    except Exception as e:
-        logger.error("Gagal menyimpan narasi ke database: %s", e)
 
 def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln, prev_thn):
     report_type = f"report_{moda}_{label}"
@@ -443,7 +487,11 @@ def generate_narrative_fallback(report_flat, col_target, moda, region_label, bln
             f"indikator ini {_arah_dinamis(total_yoy)} di level {abs_yoy} persen secara Y-on-Y."
         )
     ]
-    return random.choice(p1_options), random.choice(p2_options)
+    # Seeded per report so narrative variety still exists across different
+    # provinces/periods, but the same report always renders the same wording —
+    # regenerating or diffing a report must not change the prose.
+    rng = random.Random(f"{prov}|{thn}|{bln}|{subject}")
+    return rng.choice(p1_options), rng.choice(p2_options)
 
 def create_complete_master_word_report(prov, thn, bln, all_report_data):
     doc = docx.Document()
@@ -540,8 +588,11 @@ def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, l
     report[col_prev] = prev_grp.reindex(report.index).fillna(0)
     report[col_curr] = curr_grp.reindex(report.index).fillna(0)
     
-    prev_vals = report[col_prev].values
-    curr_vals = report[col_curr].values
+    # float cast: kolom hasil agregasi bisa bertipe object/nullable, dan pada dtype
+    # itu 0 / 0 memanggil operator Python -> ZeroDivisionError yang tidak bisa
+    # ditekan np.errstate. np.where juga mengevaluasi kedua cabang selalu.
+    prev_vals = report[col_prev].values.astype(float)
+    curr_vals = report[col_curr].values.astype(float)
     with np.errstate(divide='ignore', invalid='ignore'):
         mtm_pct = np.where(prev_vals == 0, np.nan, ((curr_vals - prev_vals) / prev_vals) * 100)
     report['M-to-M (%)'] = pd.Series(mtm_pct, index=report.index).replace([np.inf, -np.inf], np.nan)
@@ -549,16 +600,18 @@ def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, l
     report[col_cum_prev] = cum_prev_grp.reindex(report.index).fillna(0)
     report[col_cum_curr] = cum_curr_grp.reindex(report.index).fillna(0)
     
-    cum_prev_vals = report[col_cum_prev].values
-    cum_curr_vals = report[col_cum_curr].values
+    cum_prev_vals = report[col_cum_prev].values.astype(float)
+    cum_curr_vals = report[col_cum_curr].values.astype(float)
     with np.errstate(divide='ignore', invalid='ignore'):
         yoy_pct = np.where(cum_prev_vals == 0, np.nan, ((cum_curr_vals - cum_prev_vals) / cum_prev_vals) * 100)
     report['Y-on-Y (%)'] = pd.Series(yoy_pct, index=report.index).replace([np.inf, -np.inf], np.nan)
 
-    sum_prev = report[col_prev].sum()
-    sum_curr = report[col_curr].sum()
-    sum_cum_prev = report[col_cum_prev].sum()
-    sum_cum_curr = report[col_cum_curr].sum()
+    # ponytail: totals come from the full grouped series, not report[...] — report is
+    # indexed by curr period only, so a prev-only entity would be dropped from the total.
+    sum_prev = prev_grp.sum()
+    sum_curr = curr_grp.sum()
+    sum_cum_prev = cum_prev_grp.sum()
+    sum_cum_curr = cum_curr_grp.sum()
 
     total_mtm = ((sum_curr - sum_prev) / sum_prev * 100) if sum_prev != 0 else np.nan
     total_yoy = ((sum_cum_curr - sum_cum_prev) / sum_cum_prev * 100) if sum_cum_prev != 0 else np.nan
@@ -591,7 +644,7 @@ def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, l
                 styles = ['font-style: italic; background-color: #e8eaed; color: #000000;'] * len(row)
             return styles
             
-        styler = styler.format(format_id_number).background_gradient(subset=pct_cols, cmap='RdYlGn')
+        styler = styler.format(table_formatters(report_display.columns, col_target)).background_gradient(subset=pct_cols, cmap='RdYlGn')
         styler = styler.apply(highlight_rows, axis=1)
         return styler
 
@@ -622,7 +675,7 @@ def render_tables_and_narratives(all_collected_data):
             st.markdown(f"**{judul}**")
             
             # Perbaikan agar dataframe ter-render sempurna di dalam card border
-            st.dataframe(item['styled_df'], use_container_width=True)
+            st.dataframe(item['styled_df'], width='stretch')
 
             region_label = "Bandara" if current_moda == "Transportasi Udara" else "Pelabuhan/Kabupaten"
 
@@ -631,21 +684,10 @@ def render_tables_and_narratives(all_collected_data):
                 st.markdown(f"**📝 Executive Summary — {item['label']}**")
             with h2:
                 if st.session_state.get("role") == "admin":
-                    if st.button("🔄 Regenerasi", key=f"regen_report_{item['table_no']}", use_container_width=True):
+                    if st.button("🔄 Regenerasi", key=f"regen_report_{item['table_no']}", width='stretch'):
                         report_type = f"report_{current_moda}_{item['label']}"
                         period_key = f"{item['prov']}|{item['bln']}|{item['thn']}"
-                        
-                        try:
-                            engine = get_engine()
-                            with engine.raw_connection() as conn:
-                                with conn.cursor() as cursor:
-                                    cursor.execute(
-                                        "DELETE FROM ai_narratives WHERE report_type = %s AND period_key = %s",
-                                        (report_type, period_key)
-                                    )
-                                    conn.commit()
-                        except Exception as e:
-                            logger.error("Gagal menghapus cache database saat regenerasi: %s", e)
+                        delete_db_narrative(report_type, period_key)
                         st.rerun()
 
             with st.spinner(f"Menyusun Executive Summary untuk {item['label']}..."):
@@ -677,16 +719,196 @@ def render_tables_and_narratives(all_collected_data):
             if p1_text: st.markdown(p1_text)
             if p2_text: st.markdown(p2_text)
             
-            item['p1'] = p1_text
-            item['p2'] = p2_text
+            # satu titik untuk web + Word + .idml: narasi tidak boleh punya
+            # format angka sendiri yang beda dari tabel.
+            item['p1'] = normalize_narrative(p1_text, item['col_target'])
+            item['p2'] = normalize_narrative(p2_text, item['col_target'])
+
+# ==============================================================================
+# EXPORT KE TEMPLATE INDESIGN (.idml)
+# ==============================================================================
+# DEFAULT_IDML_TEMPLATE ikut diimpor dari modules.indesign_export (lihat baris import)
+
+def _kab_lookup_brs(name):
+    if str(name).strip().upper() == "DOUW ATURURE":
+        return "KABUPATEN NABIRE"
+    return get_location_metadata(name)["kab"]
+
+def render_indesign_export(meta, all_collected_data):
+    st.markdown("---")
+    st.subheader("🎨 Isi Template InDesign (BRS)")
+    st.caption(
+        "Tabel, narasi, poin utama, dan ringkasan cover dari laporan di atas dimasukkan ke template "
+        ".idml. Hasilnya dibuka di InDesign lalu disimpan sebagai .indd/PDF."
+    )
+    with st.container(border=True):
+        st.markdown("**Template & Nomor BRS**")
+        c_tpl, c_info, c_qr = st.columns(3)
+        with c_tpl:
+            up = st.file_uploader(
+                "Template BRS (.idml)",
+                type=["idml"],
+                key="idml_tpl",
+                help="Kosongkan untuk memakai template bawaan. Kalau mengunggah, ID story harus "
+                     "sama persis dengan template BRS resmi — ID yang berubah membuat tabel & "
+                     "narasi tidak terisi.",
+            )
+        with c_info:
+            info_up = st.file_uploader(
+                "Infografis",
+                type=["png", "jpg", "jpeg"],
+                key="idml_info",
+                help="Gambar infografis untuk periode ini. Dipasang ke kotak infografis yang "
+                     "sudah ada di template, jadi ukurannya tidak perlu diatur manual.",
+            )
+        with c_qr:
+            qr_up = st.file_uploader(
+                "Kode QR",
+                type=["png", "jpg", "jpeg"],
+                key="idml_qr",
+                help="Kode QR untuk periode ini. Dipasang ke kotak QR yang sudah ada di "
+                     "template, jadi ukurannya tidak perlu diatur manual.",
+            )
+        c_no, c_tgl = st.columns(2)
+        with c_no:
+            nomor_brs = st.text_input(
+                "Nomor BRS",
+                key="idml_no",
+                help="Nomor surat BRS, mis. 235/10/94/Th. XXIX",
+            )
+        with c_tgl:
+            tgl_rilis = st.text_input(
+                "Tanggal Rilis",
+                key="idml_tgl",
+                help="Tanggal rilis BRS, mis. 1 Oktober 2026",
+            )
+        # Tampilkan sumber template sebelum tombol ditekan, supaya ".idml mana yang
+        # dipakai?" tidak perlu ditebak dari UI.
+        if up is not None:
+            st.caption(f"Template: **{up.name}** (unggah)")
+        elif DEFAULT_IDML_TEMPLATE.exists():
+            st.caption(f"Template: **{DEFAULT_IDML_TEMPLATE.name}** (bawaan)")
+        else:
+            st.caption("⚠️ Template bawaan tidak ditemukan — unggah file .idml.")
+
+    if st.button("🎨 Buat File InDesign (.idml)", width='stretch', key="btn_idml"):
+        if up is not None:
+            tpl_bytes = up.getvalue()
+        elif DEFAULT_IDML_TEMPLATE.exists():
+            tpl_bytes = DEFAULT_IDML_TEMPLATE.read_bytes()
+        else:
+            st.error("Template bawaan tidak ditemukan. Unggah file .idml.")
+            return
+        laut_ports = None
+        try:
+            df_laut = get_comparison_data(meta['prov'], meta['thn'], meta['bln'], "Transportasi Laut")[0]
+            if not df_laut.empty:
+                laut_ports = [re.split(r"\s*/\s*", str(x))[0] for x in df_laut['nama_pelabuhan'].drop_duplicates()]
+        except Exception as e:
+            logger.warning("Gagal mengambil daftar pelabuhan: %s", e)
+        try:
+            res = fill_brs_template(
+                tpl_bytes, meta['prov'], meta['thn'], meta['bln'], all_collected_data, _kab_lookup_brs,
+                nomor_brs=nomor_brs.strip() or None, tanggal_rilis=tgl_rilis.strip() or None,
+                laut_ports=laut_ports,
+                qr_bytes=qr_up.getvalue() if qr_up is not None else None,
+                qr_name=qr_up.name if qr_up is not None else None,
+                infografis_bytes=info_up.getvalue() if info_up is not None else None,
+                infografis_name=info_up.name if info_up is not None else None,
+            )
+            st.session_state['idml_result'] = (res, meta)
+        except Exception as e:
+            logger.exception("Gagal mengisi template IDML")
+            st.error(f"Gagal mengisi template: {e}")
+
+    stored = st.session_state.get('idml_result')
+    if stored:
+        res, m = stored
+        st.download_button(
+            "📥 Download Template Terisi (.idml)", data=res.idml_bytes,
+            file_name=f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.idml",
+            mime="application/vnd.adobe.indesign-idml-package",
+        )
+        with st.expander(f"⚠️ {len(res.warnings)} hal yang perlu dicek di InDesign"):
+            for w in res.warnings:
+                st.markdown(f"- {w}")
+
+def _available_years():
+    """Years that actually have data, ascending. Mirrors the admin page's
+    SELECT DISTINCT tahun pattern; both modalities are unioned because the report
+    renders udara and laut for the same period."""
+    engine = get_engine()
+    years = set()
+    for table in ("transportasi_udara", "transportasi_laut"):
+        try:
+            rows = pd.read_sql(text(f"SELECT DISTINCT tahun FROM {table}"), engine)
+            years.update(str(y) for y in rows["tahun"].dropna())
+        except Exception:
+            continue
+    return sorted(years, key=int) or [str(datetime.now().year)]
+
+
+def collect_report_tables(prov, thn, bln):
+    """Kumpulkan 8 item tabel untuk satu (prov, thn, bln) dari database.
+
+    Dipakai oleh tombol Generate (Admin), tombol Show Report, dan sinkronisasi
+    ulang saat filter berubah — supaya ketiga jalur itu tidak bisa berbeda.
+    """
+    out = []
+    n = 1
+    for moda, targets in (
+        ("Transportasi Udara", [
+            ('penumpang_datang', 'Penumpang Datang'), ('penumpang_berangkat', 'Penumpang Berangkat'),
+            ('barang_bongkar_kg', 'Barang Bongkar (Ton)'),
+            ('barang_muat_kg', 'Barang Muat (Ton)')]),
+        ("Transportasi Laut", [
+            ('dn_penumpang_turun', 'Penumpang Turun'), ('dn_penumpang_naik', 'Penumpang Naik'),
+            ('dn_bongkar_barang_ton', 'Barang Bongkar (Ton)'), ('dn_muat_barang_ton', 'Barang Muat (Ton)')]),
+    ):
+        cu, pr, cc, cp, p_bln, p_thn = get_comparison_data(prov, thn, bln, moda)
+        if cu.empty:
+            continue
+        if moda == "Transportasi Udara":
+            row_col = 'nama_bandara'
+        else:
+            row_col = 'nama_kabkota' if prov == "Papua Tengah" else 'nama_pelabuhan'
+        for col, label in targets:
+            out.append(prepare_table_item(
+                cu, pr, cc, cp, col, label, row_col, thn, bln, p_bln, p_thn,
+                table_no=n, prov=prov, moda=moda))
+            n += 1
+    return out
+
+
+def meta_matches_filter(meta, now):
+    """True kalau meta yang tersimpan masih sama dengan filter yang aktif.
+
+    thn bisa str atau int tergantung sumbernya, jadi dibandingkan sebagai str.
+    Key yang hilang dianggap tidak cocok supaya data stale tidak ikut diekspor.
+    """
+    return all(str(meta.get(k)) == str(v) for k, v in now.items())
+
 
 def show_report_page():
     st.title("📋 Laporan Komparatif Strategis")
     
     c1, c2, c3 = st.columns(3)
-    with c1: prov = st.selectbox("Provinsi", list(PEMETAAN_WILAYAH.keys()))
-    with c2: thn = st.selectbox("Tahun", ['2024', '2025', '2026'], index=1)
-    with c3: bln = st.selectbox("Bulan", list(MONTH_MAP.keys()))
+    with c1:
+        prov = st.selectbox(
+            "Provinsi", list(PEMETAAN_WILAYAH.keys()),
+            help="Wilayah yang dilaporkan.",
+        )
+    with c2:
+        year_options = _available_years()
+        thn = st.selectbox(
+            "Tahun", year_options, index=len(year_options) - 1,
+            help="Tahun periode laporan.",
+        )
+    with c3:
+        bln = st.selectbox(
+            "Bulan", list(MONTH_MAP.keys()),
+            help="Bulan periode laporan.",
+        )
 
     # Cek hak akses role pengguna
     is_admin = st.session_state.get("role") == "admin"
@@ -697,35 +919,7 @@ def show_report_page():
         # Tombol khusus Admin untuk Generate/Regenerate Laporan Baru
         if is_admin:
             if st.button("⚙️ Generate Semua Laporan (Admin)", width='stretch'):
-                all_collected_data = []
-                global_table_counter = 1  
-                
-                moda_udara = "Transportasi Udara"
-                df_cu, df_pr, df_cc, df_cp, p_bln, p_thn = get_comparison_data(prov, thn, bln, moda_udara)
-                if not df_cu.empty:
-                    targets_udara = [
-                        ('penumpang_datang', 'Penumpang Datang'), ('penumpang_berangkat', 'Penumpang Berangkat'),
-                        ('barang_bongkar_kg', 'Barang Bongkar (Ton)'), 
-                        ('barang_muat_kg', 'Barang Muat (Ton)')
-                    ]
-                    for col, label in targets_udara:
-                        item = prepare_table_item(df_cu, df_pr, df_cc, df_cp, col, label, 'nama_bandara', thn, bln, p_bln, p_thn, table_no=global_table_counter, prov=prov, moda=moda_udara)
-                        all_collected_data.append(item)
-                        global_table_counter += 1
-
-                moda_laut = "Transportasi Laut"
-                df_cu_l, df_pr_l, df_cc_l, df_cp_l, p_bln_l, p_thn_l = get_comparison_data(prov, thn, bln, moda_laut)
-                if not df_cu_l.empty:
-                    row_col_laut = 'nama_kabkota' if prov == "Papua Tengah" else 'nama_pelabuhan'
-                    targets_laut = [
-                        ('dn_penumpang_turun', 'Penumpang Turun'), ('dn_penumpang_naik', 'Penumpang Naik'),
-                        ('dn_bongkar_barang_ton', 'Barang Bongkar (Ton)'), ('dn_muat_barang_ton', 'Barang Muat (Ton)')
-                    ]
-                    for col, label in targets_laut:
-                        item = prepare_table_item(df_cu_l, df_pr_l, df_cc_l, df_cp_l, col, label, row_col_laut, thn, bln, p_bln_l, p_thn_l, table_no=global_table_counter, prov=prov, moda=moda_laut)
-                        all_collected_data.append(item)
-                        global_table_counter += 1
-
+                all_collected_data = collect_report_tables(prov, thn, bln)
                 if all_collected_data:
                     st.session_state['report_all_data'] = all_collected_data
                     st.session_state['report_meta'] = {'prov': prov, 'thn': thn, 'bln': bln}
@@ -736,35 +930,7 @@ def show_report_page():
     with col_btn2:
         # Tombol untuk User Umum / Semua User untuk melakukan Show Report (Retrieve dari DB)
         if st.button("📊 Show Report", width='stretch'):
-            all_collected_data = []
-            global_table_counter = 1  
-            
-            moda_udara = "Transportasi Udara"
-            df_cu, df_pr, df_cc, df_cp, p_bln, p_thn = get_comparison_data(prov, thn, bln, moda_udara)
-            if not df_cu.empty:
-                targets_udara = [
-                    ('penumpang_datang', 'Penumpang Datang'), ('penumpang_berangkat', 'Penumpang Berangkat'),
-                    ('barang_bongkar_kg', 'Barang Bongkar (Ton)'), 
-                    ('barang_muat_kg', 'Barang Muat (Ton)')
-                ]
-                for col, label in targets_udara:
-                    item = prepare_table_item(df_cu, df_pr, df_cc, df_cp, col, label, 'nama_bandara', thn, bln, p_bln, p_thn, table_no=global_table_counter, prov=prov, moda=moda_udara)
-                    all_collected_data.append(item)
-                    global_table_counter += 1
-
-            moda_laut = "Transportasi Laut"
-            df_cu_l, df_pr_l, df_cc_l, df_cp_l, p_bln_l, p_thn_l = get_comparison_data(prov, thn, bln, moda_laut)
-            if not df_cu_l.empty:
-                row_col_laut = 'nama_kabkota' if prov == "Papua Tengah" else 'nama_pelabuhan'
-                targets_laut = [
-                    ('dn_penumpang_turun', 'Penumpang Turun'), ('dn_penumpang_naik', 'Penumpang Naik'),
-                    ('dn_bongkar_barang_ton', 'Barang Bongkar (Ton)'), ('dn_muat_barang_ton', 'Barang Muat (Ton)')
-                ]
-                for col, label in targets_laut:
-                    item = prepare_table_item(df_cu_l, df_pr_l, df_cc_l, df_cp_l, col, label, row_col_laut, thn, bln, p_bln_l, p_thn_l, table_no=global_table_counter, prov=prov, moda=moda_laut)
-                    all_collected_data.append(item)
-                    global_table_counter += 1
-
+            all_collected_data = collect_report_tables(prov, thn, bln)
             if all_collected_data:
                 st.session_state['report_all_data'] = all_collected_data
                 st.session_state['report_meta'] = {'prov': prov, 'thn': thn, 'bln': bln}
@@ -775,16 +941,44 @@ def show_report_page():
         all_collected_data = st.session_state['report_all_data']
         meta = st.session_state.get('report_meta', {'prov': prov, 'thn': thn, 'bln': bln})
 
+        # Filter di atas adalah widget hidup: begitu diubah, Streamlit rerun tapi
+        # report_all_data masih berisi periode lama. Kalau export boleh tetap jalan,
+        # judul/header/nama file akan menyebut periode yang berbeda dari yang
+        # difilter — persis masalah "konteks tidak cocok". Jadi data diminta ulang
+        # untuk periode yang sedang dipilih.
+        _now = {'prov': prov, 'thn': thn, 'bln': bln}
+        if not meta_matches_filter(meta, _now):
+            _fresh = collect_report_tables(prov, thn, bln)
+            if _fresh:
+                all_collected_data = _fresh
+                meta = _now
+                st.session_state['report_all_data'] = _fresh
+                st.session_state['report_meta'] = _now
+                st.info(
+                    f"Filter diubah ke **{prov} · {bln} {thn}** — laporan dimuat ulang "
+                    "untuk periode tersebut."
+                )
+            else:
+                st.session_state.pop('report_all_data', None)
+                st.session_state.pop('report_meta', None)
+                all_collected_data = []
+                st.warning(
+                    f"Tidak ada data untuk **{prov} · {bln} {thn}**. "
+                    "Laporan yang tampil sudah dikosongkan."
+                )
+
         # Saat fungsi render dipanggil, teks narasi otomatis di-retrieve dari database melalui fungsi get_db_narrative()
         render_tables_and_narratives(all_collected_data)
 
-        master_word_file = create_complete_master_word_report(
-            meta['prov'], meta['thn'], meta['bln'], all_collected_data
-        )
-        st.success("Laporan berhasil dimuat!")
-        st.download_button(
-            label="📥 Download Master Dokumen Word (Semua 8 Tabel & Narasi)",
-            data=master_word_file,
-            file_name=f"Master_Laporan_Transportasi_{meta['prov']}_{meta['bln']}_{meta['thn']}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        if all_collected_data:
+            master_word_file = create_complete_master_word_report(
+                meta['prov'], meta['thn'], meta['bln'], all_collected_data
+            )
+            st.success("Laporan berhasil dimuat!")
+            st.download_button(
+                label="📥 Download Master Dokumen Word (Semua 8 Tabel & Narasi)",
+                data=master_word_file,
+                file_name=f"Master_Laporan_Transportasi_{meta['prov']}_{meta['bln']}_{meta['thn']}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            render_indesign_export(meta, all_collected_data)

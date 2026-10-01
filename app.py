@@ -104,12 +104,19 @@ if not st.session_state["authenticated"]:
         )
 
         with st.form("login_form"):
-            username = st.text_input("Username", placeholder="admin or user")
+            username = st.text_input(
+                "Nama Pengguna",
+                placeholder="admin atau user",
+                help="Akun yang terdaftar di USERS. Gunakan 'admin' untuk akses lengkap.",
+            )
             password = st.text_input(
-                "Password", type="password", placeholder="Enter password"
+                "Kata Sandi",
+                type="password",
+                placeholder="Masukkan kata sandi",
+                help="Sandi akun ini. Kosongkan bila akun tidak memakai sandi.",
             )
             submit = st.form_submit_button(
-                "Sign in", type="primary", width='stretch'
+                "Masuk", type="primary", width='stretch'
             )
             if submit:
                 if (
@@ -206,7 +213,7 @@ with st.sidebar:
       unsafe_allow_html=True,
   )
   st.markdown("<br>", unsafe_allow_html=True)
-  if st.button("Log out", width='stretch'):
+  if st.button("Keluar", width='stretch', help="Akhiri sesi dan kembali ke halaman masuk."):
     st.session_state["authenticated"] = False
     st.rerun()
 

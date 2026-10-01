@@ -1,10 +1,26 @@
+import os
+import secrets
+
 import pandas as pd
 import plotly.express as px
 from sqlalchemy import text
 import streamlit as st
-from modules.config import PEMETAAN_WILAYAH
+from modules.config import PEMETAAN_WILAYAH, load_project_env
 from modules.database import delete_db, get_engine
 from modules.etl_engine import detect_file_metadata, parse_transport_file
+
+ADMIN_PASSWORD_ENV = "ADMIN_PASSWORD"
+
+
+def _admin_password():
+    """Configured admin password, or None.
+
+    None is the fail-closed answer: with no password configured, admin access is
+    never granted. The value is never hardcoded here on purpose -- it lives in
+    the project-root .env (gitignored) or the real environment.
+    """
+    load_project_env()
+    return os.getenv(ADMIN_PASSWORD_ENV) or None
 
 MONTH_MAP = {
     "Januari": 1,
@@ -148,6 +164,7 @@ def show_series_chart_section():
           "Moda Transportasi",
           ["Transportasi Udara", "Transportasi Laut"],
           key="series_moda",
+          help="Menentukan tabel & jenis entitas yang dipakai.",
       )
     table = table_map[moda]
     entity_col = entity_col_map[moda]
@@ -155,14 +172,16 @@ def show_series_chart_section():
 
     with col2:
       kabupaten = st.selectbox(
-          "Kabupaten/Kota", ["SEMUA"] + get_all_kabupaten(), key="series_kabupaten"
+          "Kabupaten/Kota", ["SEMUA"] + get_all_kabupaten(), key="series_kabupaten",
+          help="Filter wilayah untuk membatasi daftar bandara/pelabuhan.",
       )
 
     entity_options = get_entity_options(engine, table, entity_col, kabupaten)
     entities_selected = st.multiselect(
-        f"{entity_label} (Kosongkan untuk agregat total wilayah terpilih)",
+        entity_label,
         entity_options,
         key="series_entities",
+        help="Kosongkan untuk agregat total wilayah terpilih.",
     )
 
     variabel_list = st.multiselect(
@@ -170,6 +189,7 @@ def show_series_chart_section():
         VAR_OPTIONS[moda],
         default=[VAR_OPTIONS[moda][0]],
         key="series_variabel_multi",
+        help="Pilih satu atau lebih variabel untuk diplot pada grafik.",
     )
 
   st.markdown("")
@@ -177,7 +197,7 @@ def show_series_chart_section():
       "📈 Buat Visualisasi Grafik",
       key="series_generate",
       type="primary",
-      use_container_width=True,
+      width='stretch',
   ):
     if not variabel_list:
       st.warning("⚠️ Pilih minimal satu variabel indikator.")
@@ -258,14 +278,14 @@ def show_series_chart_section():
     fig.update_layout(
         xaxis_title="Periode Waktu", yaxis_title="Nilai", legend_title="Indikator"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     with st.expander("📋 Lihat Tabel Data Mentah di Balik Grafik"):
       st.dataframe(
           df_long.drop(columns=["tahun_int", "month_num"]).rename(
               columns={"periode": "Periode", "seri": "Seri", "nilai": "Nilai"}
           ),
-          use_container_width=True,
+          width='stretch',
       )
 
 
@@ -297,11 +317,18 @@ def show_series_admin_page():
       st.info("🔒 Masukkan kata sandi administrator untuk membuka fitur manajemen.")
       password = st.text_input("Kata Sandi Admin", type="password")
       submit_button = st.form_submit_button(
-          "Masuk ke Panel Admin", use_container_width=True
+          "Masuk ke Panel Admin", width='stretch'
       )
 
       if submit_button:
-        if password == "papua123":
+        expected = _admin_password()
+        if not expected:
+          st.error(
+              "🔴 ADMIN_PASSWORD belum dikonfigurasi, sehingga akses admin dinonaktifkan."
+              " Salin .env.example menjadi .env lalu isi ADMIN_PASSWORD, lalu jal ulang"
+              " aplikasi."
+          )
+        elif secrets.compare_digest(password.encode(), expected.encode()):
           st.session_state["admin_logged_in"] = True
           st.success("Akses Diterima!")
           st.rerun()
@@ -309,7 +336,7 @@ def show_series_admin_page():
           st.error("Kata sandi yang Anda masukkan salah.")
     return
 
-  if st.sidebar.button("🚪 Keluar (Log Out Admin)", use_container_width=True):
+  if st.sidebar.button("🚪 Keluar (Log Out Admin)", width='stretch'):
     st.session_state["admin_logged_in"] = False
     st.rerun()
 
@@ -332,10 +359,12 @@ def show_series_admin_page():
     )
 
     uploaded_files = st.file_uploader(
-        "Seret & letakkan berkas Excel BPS di sini",
+        "Berkas Excel BPS",
         type=["xls", "xlsx"],
         accept_multiple_files=True,
         key="upload_files_multi",
+        help="Seret & letakkan berkas .xls/.xlsx di sini. Tahun dan bulan dibaca otomatis "
+             "dari nama berkas, lalu bisa dikoreksi di langkah berikutnya.",
     )
 
     if uploaded_files:
@@ -375,6 +404,7 @@ def show_series_admin_page():
                 max_value=2035,
                 value=int(m["tahun"]),
                 key=f"upload_tahun_{i}",
+                help="Tahun periode data pada berkas ini.",
             )
           with c3:
             m["bulan"] = st.selectbox(
@@ -382,6 +412,7 @@ def show_series_admin_page():
                 MONTH_LIST,
                 index=MONTH_LIST.index(m["bulan"]),
                 key=f"upload_bulan_{i}",
+                help="Bulan periode data pada berkas ini.",
             )
         st.divider()
 
@@ -470,7 +501,7 @@ def show_series_admin_page():
             )
             mcol[3].metric(f"Lokasi ({s['label_lokasi']})", s["jumlah_lokasi"])
 
-            st.dataframe(p["df"], use_container_width=True, height=200)
+            st.dataframe(p["df"], width='stretch', height=200)
 
         if any_valid:
           st.markdown("#### Langkah 3: Konfirmasi Penyimpanan")
@@ -490,7 +521,7 @@ def show_series_admin_page():
               key="btn_save_upload",
               type="primary",
               disabled=not confirm,
-              use_container_width=True,
+              width='stretch',
           ):
             engine = get_engine()
             success_count = 0
@@ -531,14 +562,25 @@ def show_series_admin_page():
     engine = get_engine()
     c_e1, c_e2, c_e3 = st.columns(3)
     with c_e1:
+      # Nilai balik HARUS tetap nama tabel mentah: dipakai langsung di SQL pada
+      # baris select/delete/insert. format_func hanya mengubah teks yang tampil.
       table_edit = st.selectbox(
-          "Pilih Tabel", ["transportasi_udara", "transportasi_laut"]
+          "Moda Transportasi",
+          ["transportasi_udara", "transportasi_laut"],
+          format_func=lambda t: "Transportasi Udara"
+          if t == "transportasi_udara"
+          else "Transportasi Laut",
+          help="Menentukan tabel mana yang akan diedit.",
       )
     with c_e2:
-      year_edit = st.text_input("Tahun", "2026")
+      year_edit = st.text_input(
+          "Tahun Periode",
+          "2026",
+          help="Tahun periode record, mis. 2026. Harus angka 4 digit.",
+      )
     with c_e3:
       month_edit = st.selectbox(
-          "Bulan",
+          "Bulan Periode",
           [
               "Januari",
               "Februari",
@@ -559,7 +601,7 @@ def show_series_admin_page():
     if st.button(
         "🔍 Muat Data untuk Diedit",
         key="btn_load_edit",
-        use_container_width=True,
+        width='stretch',
     ):
       query = text(
           f"SELECT * FROM {table_edit} WHERE CAST(tahun AS TEXT) = :tahun AND"
@@ -576,12 +618,12 @@ def show_series_admin_page():
     if "df_to_edit" in st.session_state:
       edited_df = st.data_editor(
           st.session_state["df_to_edit"],
-          use_container_width=True,
+          width='stretch',
           num_rows="dynamic",
       )
 
       if st.button(
-          "💾 Simpan Perubahan Baris", type="primary", use_container_width=True
+          "💾 Simpan Perubahan Baris", type="primary", width='stretch'
       ):
         try:
           with engine.begin() as conn:
@@ -621,7 +663,10 @@ def show_series_admin_page():
       )
     with d2:
       provinsi_del = st.selectbox(
-          "Provinsi", ["SEMUA"] + list(PEMETAAN_WILAYAH.keys()), key="del_provinsi"
+          "Provinsi",
+          ["SEMUA"] + list(PEMETAAN_WILAYAH.keys()),
+          key="del_provinsi",
+          help="Filter provinsi data yang akan dihapus.",
       )
     with d3:
       try:
@@ -633,10 +678,14 @@ def show_series_admin_page():
         )
       except Exception:
         year_options = ["SEMUA"]
-      tahun_del = st.selectbox("Tahun", year_options, key="del_tahun")
+      tahun_del = st.selectbox(
+          "Tahun", year_options, key="del_tahun",
+          help="Filter tahun data yang akan dihapus.",
+      )
     with d4:
       bulan_del = st.selectbox(
-          "Bulan", ["SEMUA"] + list(MONTH_MAP.keys()), key="del_bulan"
+          "Bulan", ["SEMUA"] + list(MONTH_MAP.keys()), key="del_bulan",
+          help="Filter bulan data yang akan dihapus.",
       )
 
     conditions = []
@@ -687,7 +736,7 @@ def show_series_admin_page():
           disabled=not confirm_del,
           key="btn_delete_filtered",
           type="primary",
-          use_container_width=True,
+          width='stretch',
       ):
         try:
           with engine_del.begin() as conn:
@@ -710,8 +759,19 @@ def show_series_admin_page():
           "Tindakan ekstrem ini akan menghapus keseluruhan file database"
           " sistem!"
       )
-      if st.button("Reset / Hapus Seluruh Database", type="primary"):
+      confirm_reset = st.checkbox(
+          "Saya paham SEMUA tabel (transportasi dan pariwisata) akan dihapus permanen.",
+          key="confirm_delete_reset",
+      )
+      if st.button(
+          "Reset / Hapus Seluruh Database",
+          disabled=not confirm_reset,
+          type="primary",
+          key="btn_delete_reset",
+      ):
         if delete_db():
           st.success("Database berhasil direset total.")
+          st.session_state.pop("confirm_delete_reset", None)
+          st.rerun()
         else:
           st.info("File database tidak ditemukan.")

@@ -86,16 +86,19 @@ tables (`wilayah`, `transportasi_laut`, `transportasi_udara`,
   `INSERT OR REPLACE`) so it works on both SQLite and Postgres. The actual
   transform/query *logic* is unchanged — verified against the original
   `_transform_data` behavior.
-- **Transportasi's admin page has a double gate.** Its `show_series_admin_page()`
-  function is carried over unmodified, including its own internal
-  `papua123` password prompt (which is how it originally worked, since the
-  repo had no app-level login at all). On top of that, the sidebar now only
-  shows the "Admin & Analisis Series" nav entry to users with the unified
-  `admin` role, per your request to gate it consistently. That means an
-  admin still has to type `papua123` a second time once they land on the
-  page — a bit redundant, but intentionally left as-is to keep that page's
-  function identical to the original. Say the word if you'd like that inner
-  password prompt removed now that there's a real login.
+- **Transportasi's admin page still has a double gate.** The sidebar only shows
+  the "Admin & Analisis Series" nav entry to users with the unified `admin`
+  role, and `show_series_admin_page()` additionally asks for a password. An
+  admin therefore authenticates twice — redundant, but left as-is to keep that
+  function identical to the original.
+- **The admin password is no longer hardcoded.** It is read from
+  `ADMIN_PASSWORD` in the project-root `.env` (gitignored) or the real
+  environment; a real env var takes precedence over `.env`. If it is unset,
+  admin access is denied outright rather than falling back to a known value.
+  Copy `.env.example` to `.env` on a fresh checkout. The comparison uses
+  `secrets.compare_digest` so it is not vulnerable to timing leaks. `.env` can
+  also carry `DATABASE_URL` to point the app at Postgres instead of
+  `data/app_data.db`.
 - Its "Log Out Admin" button (inside that page, only clears its own inner
   `admin_logged_in` flag) will appear in the sidebar alongside the app's
   main "Log out" button when you're on that page — again, unmodified
@@ -117,3 +120,16 @@ app. I did:
 
 But I have **not** run `streamlit run app.py` myself. Please run it locally
 and let me know if anything breaks — happy to fix.
+
+## Export ke template InDesign (BRS)
+
+Di halaman **Laporan Komparatif Strategis**, setelah laporan ditampilkan (Show Report), bagian
+**"Isi Template InDesign (BRS)"** mengisi template `templates/BRS_Transportasi_template.idml`
+(atau file .idml yang diunggah) dengan provinsi, tahun, dan bulan terpilih: 8 tabel, narasi 2 paragraf per
+tabel, poin utama tiap bab, ringkasan cover, judul, dan header/footer halaman.
+
+- Logika ada di `modules/indesign_export.py` (tanpa dependensi streamlit, bisa diuji terpisah).
+- Peta story (`TABLE_STORIES`, `NARR_SLOTS`) khusus untuk template Papua Tengah Agustus 2026.
+  Jika struktur template diubah di InDesign, ekspor ulang IDML dan sesuaikan peta tersebut.
+- Yang TIDAK otomatis: gambar infografis, QR code, dan nomor/tanggal rilis (isi di kolom yang tersedia).
+- Jumlah baris tabel mengikuti data provinsi; cek teks overset dan tinggi frame di InDesign.

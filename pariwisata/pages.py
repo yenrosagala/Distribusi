@@ -242,7 +242,7 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
                     plotly_theme(fig_map, height=460, dark=True)
 
                     with st.container(border=True):
-                        st.plotly_chart(fig_map, use_container_width=True)
+                        st.plotly_chart(fig_map, width='stretch')
                 else:
                     with st.container(border=True):
                         st.warning("Map geometry file (papua_provinces.parquet) could not be loaded.")
@@ -251,7 +251,7 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
                 st.download_button(
                     "📥 Download Summary CSV", data=csv_data,
                     file_name=f"infographic_{map_indicator}_{map_year}_{map_month}.csv", mime="text/csv",
-                    use_container_width=True,
+                    width='stretch',
                 )
 
             with col_right:

@@ -1,0 +1,12 @@
+# Secrets -- must never be committed
+.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Test / tool caches
+.pytest_cache/

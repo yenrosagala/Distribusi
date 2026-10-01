@@ -1,5 +1,40 @@
 import pandas as pd
 import re
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_project_env():
+    """Load the project-root .env into os.environ.
+
+    Idempotent and never overrides a variable that is already set in the real
+    environment, so a real env var or a st.secrets entry always wins. Safe to
+    call from any module; a missing .env is not an error.
+    """
+    from dotenv import load_dotenv
+
+    env_path = PROJECT_ROOT / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path)
+    return env_path
+
+
+def read_secret(key, default=None):
+    """st.secrets.get(key) that returns `default` instead of raising.
+
+    st.secrets raises StreamlitSecretNotFoundError when no secrets.toml exists
+    at all, so an unguarded read anywhere takes down the whole page. Every
+    caller that touches st.secrets must go through this.
+    """
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(key)
+    except Exception:
+        return default
+    return default if value in (None, "") else value
+
 
 # 1. Pemetaan Provinsi & Kabupaten Terbaru
 PEMETAAN_WILAYAH = {
@@ -67,11 +102,13 @@ def get_location_metadata(name):
         
     # 2. Prioritas Kedua: Pencocokan Sebagian (Partial Match)
     # Berguna jika format BPS menuliskan "BANDARA SENTANI" (sedangkan key hanya "SENTANI")
-    for key, meta in MAPPING_LOKASI_KAB_PROV.items():
-        # Tambahkan spasi atau batas kata agar lebih presisi jika diperlukan, 
-        # namun implementasi 'in' dasar sudah cukup untuk level ini.
+    # ponytail: iterate longest-key-first so the most specific key always wins.
+    # Previously this depended on dict insertion order — e.g. 'BIAK' is a substring
+    # of 'BIAK NUMFOR' — so a future key inserted above another could silently
+    # change a mapping.
+    for key in sorted(MAPPING_LOKASI_KAB_PROV, key=len, reverse=True):
         if key in name_clean:
-            return meta
+            return MAPPING_LOKASI_KAB_PROV[key]
             
     # Fallback jika tidak ada lokasi yang dikenali sama sekali
     return {'kab': None, 'prov': 'PAPUA'}
@@ -96,5 +133,7 @@ def get_province_by_kabupaten(kab_name):
             if kab_clean == k_clean:
                 return prov.upper()
                 
-    # Fallback jika tidak ditemukan
-    return 'PAPUA'
+    # Fallback: None signals "unmapped". Callers (the ETL) must fail loudly on this
+    # rather than silently attributing an unknown kabupaten to Papua's totals.
+    return None
+

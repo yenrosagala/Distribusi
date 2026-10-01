@@ -1,5 +1,7 @@
 streamlit
 pandas
+jinja2>=3.1.5
+python-dotenv
 numpy
 plotly
 geopandas
