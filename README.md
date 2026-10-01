@@ -7,8 +7,8 @@ shell:
   (RLMTGAB) analytics: Home Dashboard, Infographic Stat Map, Trends
   Visualizations, Report (AI-narrated), Admin ETL Uploads.
 - **Transportasi** (from `StaTransportasi`) — sea/air transport statistics:
-  Dashboard Statistik, Laporan Komparatif (Word export), Admin & Analisis
-  Series.
+  Dashboard Statistik, Laporan Komparatif (Word + InDesign/BRS export), Admin &
+  Analisis Series.
 
 The UI/UX shell (theme, login screen, sidebar navigation, `style.css`) comes
 from **dash-pariwisata**. The database layer (SQLAlchemy engine, configurable
@@ -24,19 +24,26 @@ one database, one engine, one connection config.
 ├── logo.png                   # Unused brand asset carried over (unused in original too)
 ├── papua_provinces.parquet    # Map geometry for Infographic Stat Map
 ├── requirements.txt
+├── .env.example               # Copy to .env and fill in ADMIN_PASSWORD
+├── .gitignore                 # Excludes .env, .streamlit/secrets.toml, __pycache__
+├── .devcontainer/             # Devcontainer config
 ├── data/
 │   └── app_data.db            # Local SQLite fallback DB (seeded from both repos' original data)
+├── templates/
+│   └── BRS_Transportasi_Template Folder/   # InDesign BRS package (.idml/.indd/.pdf + fonts/links)
 ├── pariwisata/                # From dash-pariwisata, adapted to the shared DB
 │   ├── etl_engine.py          # ETLEngine — same transform logic, now runs on the shared SQLAlchemy engine
 │   ├── ai.py                  # Gemini narrative generation for the Report page
 │   └── pages.py               # The 5 page-render functions (unwrapped from the original if/elif block)
-└── modules/                   # From StaTransportasi, unchanged except database.py
-    ├── database.py            # get_engine()/init_db() — added a local SQLite fallback (see below)
-    ├── config.py               # Papua wilayah/kabupaten mapping
-    ├── etl_engine.py           # BPS Excel parser for transport data
-    ├── dashboard_page.py       # show_dashboard_page()
-    ├── report_page.py         # show_report_page()
-    └── admin_page.py           # show_series_admin_page()
+├── modules/                   # From StaTransportasi
+│   ├── database.py            # get_engine()/init_db() — local SQLite fallback (see below)
+│   ├── config.py              # Papua wilayah/kabupaten mapping + env/secret loading
+│   ├── etl_engine.py          # BPS Excel parser for transport data
+│   ├── dashboard_page.py      # show_dashboard_page()
+│   ├── report_page.py         # show_report_page() + Word/BRS export UI
+│   ├── admin_page.py          # show_series_admin_page()
+│   └── indesign_export.py     # Fills the BRS .idml — no streamlit import, unit-testable
+└── tests/                     # pytest suite (10 files, 57 tests)
 ```
 
 `StaTransportasi`'s original `app.py` was dead code (leftover Dash
@@ -48,10 +55,14 @@ file — neither is part of the running app, so neither was carried over.
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env      # then set ADMIN_PASSWORD in .env
 streamlit run app.py
 ```
 
 Login: `admin` / `admin123` (full access) or `user` / `user123` (no Admin pages).
+These two shell accounts are still hardcoded in `app.py`'s `USERS` dict — the
+`ADMIN_PASSWORD` env var guards the *second* gate inside
+`show_series_admin_page()`, which is separate (see Integration notes).
 
 ## Database
 
@@ -60,8 +71,10 @@ Streamlit secrets/env exactly as StaTransportasi did. **New:** if no
 `DATABASE_URL` is configured, it now falls back to a local SQLite file at
 `data/app_data.db` instead of crashing — this file has already been seeded
 with both repos' original demo data (240 sea-transport rows, 504
-air-transport rows, 87 tourism rows, 5 cached AI narratives) so the app runs
-out of the box.
+air-transport rows, 87 tourism rows, 6 cached AI narratives) so the app runs
+out of the box. The `wilayah` table ships empty — it is a province/city lookup
+used by the ETL admin pages, so populate it (or point at a real Postgres) if
+you rely on those filters.
 
 For production, set `DATABASE_URL` in `.streamlit/secrets.toml` (or as an
 env var) to a Postgres connection string, e.g.:
@@ -108,28 +121,69 @@ tables (`wilayah`, `transportasi_laut`, `transportasi_udara`,
   `gunicorn` — not used by Streamlit, `datetime` — a stdlib module, not a
   pip package).
 
-## Not fully tested end-to-end
+## Verification status
 
-This was built and verified in a sandbox with no internet access, so I
-could not `pip install streamlit`/`geopandas`/etc. and actually launch the
-app. I did:
-- Syntax-check every file (`py_compile`).
-- Validate every DDL statement against real SQLite.
-- Re-run the tourism ETL's transform logic against sample data and confirm
-  identical output to the original.
+- `python -m pytest tests -q` → **57 passed**.
+- `python -m compileall -q modules app.py` → clean.
+- Streamlit health endpoint returns `200 ok`; a live Gemini narrative request
+  returns HTTP 200.
+- A real `fill_brs_template()` run against the shipped template produces a
+  valid 558 KB `.idml` (zip integrity passes) with no residual template
+  province text — verified by `tests/test_template_guard.py`.
 
-But I have **not** run `streamlit run app.py` myself. Please run it locally
-and let me know if anything breaks — happy to fix.
+**Still unverified:** the generated `.idml` has not been opened in Adobe
+InDesign, so table overset/red-plus markers and page alignment need a human
+look after export. The app was also last exercised through scoped Streamlit
+probes rather than a full click-through of every page.
+
+## Tests
+
+```bash
+python -m pytest tests -q
+```
+
+| File | Covers |
+| --- | --- |
+| `test_template_guard.py` | template/story-ID validation, province replacement, orphan-narrative cleanup |
+| `test_idml_qr.py` | QR embedding + relative link rewrite in the `.idml` package |
+| `test_infografis_upload.py` | infographic embedding + relative link rewrite |
+| `test_narrative_format.py` | 0 decimals for passengers, 2 for cargo/percent, `%` → `persen` |
+| `test_prev_period.py` | comparison period comes from the DB, not a guess |
+| `test_zero_prev_period.py` | previous-period totals when there is no prior data |
+| `test_report_totals.py` | report totals match the underlying rows |
+| `test_meta_filter_sync.py` | sidebar filter state syncs with page filters |
+| `test_location_years_narrative.py` | location/year selection feeds the narrative |
+| `test_admin_auth.py` | admin fails closed when `ADMIN_PASSWORD` is unset |
+
+Story and spread IDs are read from the template at test time rather than
+hardcoded, so the suite survives the next InDesign re-export.
 
 ## Export ke template InDesign (BRS)
 
 Di halaman **Laporan Komparatif Strategis**, setelah laporan ditampilkan (Show Report), bagian
-**"Isi Template InDesign (BRS)"** mengisi template `templates/BRS_Transportasi_template.idml`
+**"Isi Template InDesign (BRS)"** mengisi template bawaan
+`templates/BRS_Transportasi_Template Folder/BRS_Transportasi_Template.idml`
 (atau file .idml yang diunggah) dengan provinsi, tahun, dan bulan terpilih: 8 tabel, narasi 2 paragraf per
 tabel, poin utama tiap bab, ringkasan cover, judul, dan header/footer halaman.
 
 - Logika ada di `modules/indesign_export.py` (tanpa dependensi streamlit, bisa diuji terpisah).
-- Peta story (`TABLE_STORIES`, `NARR_SLOTS`) khusus untuk template Papua Tengah Agustus 2026.
-  Jika struktur template diubah di InDesign, ekspor ulang IDML dan sesuaikan peta tersebut.
-- Yang TIDAK otomatis: gambar infografis, QR code, dan nomor/tanggal rilis (isi di kolom yang tersedia).
+- Path template ada di satu konstanta, `DEFAULT_TEMPLATE`; `report_page.py` mengimpornya,
+  jadi tidak ada lagi path template yang ditulis ulang di dua tempat.
+- **Otomatis:** nomor & tanggal rilis, QR code, dan gambar infografis (keduanya ditulis
+  ke dalam paket `Links/` dan tautannya diubah jadi relatif, supaya tidak jadi broken
+  link di mesin lain).
+- **Tidak otomatis:** gambar infografis dan QR bawaan template hanya diganti kalau kamu
+  mengunggah yang baru — kalau tidak, keduanya masih milik periode template dan
+  hasilnya muncul sebagai peringatan.
+- Peta story (`TABLE_STORIES`, `NARR_SLOTS`, `POINTER_STORIES`, `COVER_STORY`,
+  `PROTO_TABLE_STORY`) terikat ke ID story milik template ini. Kalau template
+  di-export ulang dari InDesign, ID story bisa berubah: ekspor ulang lalu sesuaikan
+  peta tersebut. `fill_brs_template()` akan menolak template yang tidak cocok dengan
+  menyebutkan ID story yang hilang, bukan crash dengan `KeyError`.
+- Nama provinsi di dalam teks template (`Papua Selatan` / `Papua Tengah`) diganti ke
+  provinsi terpilih, jadi satu template bisa dipakai untuk provinsi mana pun.
 - Jumlah baris tabel mengikuti data provinsi; cek teks overset dan tinggi frame di InDesign.
+
+> Catatan lisensi: folder `Document fonts/` berisi font Arial, yang lisensinya
+> melarang redistribusi. Font itu hanya perlu untuk membuka `.indd` di InDesign —
+> aplikasi sendiri tidak membutuhkannya.
