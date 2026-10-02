@@ -735,55 +735,85 @@ def _kab_lookup_brs(name):
     return get_location_metadata(name)["kab"]
 
 def render_indesign_export(meta, all_collected_data):
+    # CSS injection to make dark button text clearly visible (white)
+    st.markdown("""
+        <style>
+        /* Force white text inside buttons and dark action components */
+        div.stButton > button, 
+        div.stDownloadButton > button,
+        [data-testid="stFileUploaderDropzone"] {
+            color: #FFFFFF !important;
+        }
+        div.stButton > button *, 
+        div.stDownloadButton > button * {
+            color: #FFFFFF !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("---")
     st.subheader("🎨 Isi Template InDesign (BRS)")
     st.caption(
         "Tabel, narasi, poin utama, dan ringkasan cover dari laporan di atas dimasukkan ke template "
         ".idml. Hasilnya dibuka di InDesign lalu disimpan sebagai .indd/PDF."
     )
+    
     with st.container(border=True):
-        st.markdown("**Template & Nomor BRS**")
+        st.markdown("### 📋 Pengaturan & Berkas BRS")
         c_tpl, c_info, c_qr = st.columns(3)
+        
         with c_tpl:
-            up = st.file_uploader(
-                "Template BRS (.idml)",
-                type=["idml"],
-                key="idml_tpl",
-                help="Kosongkan untuk memakai template bawaan. Kalau mengunggah, ID story harus "
-                     "sama persis dengan template BRS resmi — ID yang berubah membuat tabel & "
-                     "narasi tidak terisi.",
-            )
+            with st.container(border=True):
+                st.markdown("**1. Template IDML**")
+                up = st.file_uploader(
+                    "Unggah Template BRS (.idml)",
+                    type=["idml"],
+                    key="idml_tpl",
+                    help="Kosongkan untuk memakai template bawaan.",
+                )
+                
         with c_info:
-            info_up = st.file_uploader(
-                "Infografis",
-                type=["png", "jpg", "jpeg"],
-                key="idml_info",
-                help="Gambar infografis untuk periode ini. Dipasang ke kotak infografis yang "
-                     "sudah ada di template, jadi ukurannya tidak perlu diatur manual.",
-            )
+            with st.container(border=True):
+                st.markdown("**2. Infografis**")
+                info_up = st.file_uploader(
+                    "Unggah Gambar Infografis",
+                    type=["png", "jpg", "jpeg"],
+                    key="idml_info",
+                    help="Gambar infografis untuk periode ini.",
+                )
+                
         with c_qr:
-            qr_up = st.file_uploader(
-                "Kode QR",
-                type=["png", "jpg", "jpeg"],
-                key="idml_qr",
-                help="Kode QR untuk periode ini. Dipasang ke kotak QR yang sudah ada di "
-                     "template, jadi ukurannya tidak perlu diatur manual.",
-            )
+            with st.container(border=True):
+                st.markdown("**3. Kode QR**")
+                qr_up = st.file_uploader(
+                    "Unggah Gambar Kode QR",
+                    type=["png", "jpg", "jpeg"],
+                    key="idml_qr",
+                    help="Kode QR untuk periode ini.",
+                )
+                
         c_no, c_tgl = st.columns(2)
         with c_no:
-            nomor_brs = st.text_input(
-                "Nomor BRS",
-                key="idml_no",
-                help="Nomor surat BRS, mis. 235/10/94/Th. XXIX",
-            )
+            with st.container(border=True):
+                st.markdown("**4. Nomor BRS**")
+                nomor_brs = st.text_input(
+                    "Nomor BRS",
+                    key="idml_no",
+                    placeholder="mis. 235/10/94/Th. XXIX",
+                    label_visibility="collapsed"
+                )
+                
         with c_tgl:
-            tgl_rilis = st.text_input(
-                "Tanggal Rilis",
-                key="idml_tgl",
-                help="Tanggal rilis BRS, mis. 1 Oktober 2026",
-            )
-        # Tampilkan sumber template sebelum tombol ditekan, supaya ".idml mana yang
-        # dipakai?" tidak perlu ditebak dari UI.
+            with st.container(border=True):
+                st.markdown("**5. Tanggal Rilis**")
+                tgl_rilis = st.text_input(
+                    "Tanggal Rilis",
+                    key="idml_tgl",
+                    placeholder="mis. 1 Oktober 2026",
+                    label_visibility="collapsed"
+                )
+                
+        # Tampilkan sumber template
         if up is not None:
             st.caption(f"Template: **{up.name}** (unggah)")
         elif DEFAULT_IDML_TEMPLATE.exists():
