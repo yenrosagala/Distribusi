@@ -1,0 +1,9 @@
+[theme]
+# style.css ditulis untuk tema terang. Tanpa file ini Streamlit mengikuti
+# preferensi dark-mode browser, sehingga komponen yang warnanya datang dari
+# variabel tema (tab, tombol unduh, caption) jadi terang di atas latar terang.
+base = "light"
+primaryColor = "#F59E0B"
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0F172A"

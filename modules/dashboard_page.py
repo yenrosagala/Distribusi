@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 from sqlalchemy import text
 from google import genai
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
+from modules.ai_backup import openrouter_generate
+from modules.report_page import format_id_number, _arah_dinamis, get_gemini_api_keys
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -14,69 +16,6 @@ if not logger.handlers:
 # ==============================================================================
 # HELPER MANDIRI
 # ==============================================================================
-def format_id_number(x, decimals=2):
-    if pd.isna(x) or str(x).lower() in ['nan', 'inf', '-inf', 'undefined']:
-        return "Undefined"
-    try:
-        val = float(x)
-        if pd.isna(val):
-            return "Undefined"
-        s = f"{val:,.{decimals}f}"
-    except (ValueError, TypeError):
-        return str(x)
-    return s.replace(",", "§").replace(".", ",").replace("§", ".")
-
-
-def _arah_dinamis(pct):
-    # Same deterministic wording as report_page: a number's direction is a fact.
-    if pd.isna(pct):
-        return "tercatat"
-    if pct >= 10:
-        return "mengalami lonjakan"
-    if pct > 0:
-        return "meningkat"
-    if pct <= -10:
-        return "mengalami penurunan tajam"
-    if pct < 0:
-        return "menurun"
-    return "stabil"
-
-
-def get_gemini_api_keys():
-    keys = []
-    def add_value(v):
-        if not v:
-            return
-        if isinstance(v, str):
-            v = v.strip()
-            if v:
-                keys.append(v)
-        elif isinstance(v, (list, tuple)):
-            for x in v:
-                add_value(x)
-        else:
-            s = str(v).strip()
-            if s:
-                keys.append(s)
-
-    try:
-        add_value(st.secrets.get("GEMINI_API_KEYS"))
-        add_value(st.secrets.get("GEMINI_API_KEY"))
-        add_value(st.secrets.get("GOOGLE_API_KEY"))
-        add_value(st.secrets.get("API_GEMINI_KEYS"))
-        add_value(st.secrets.get("API_GEMINI_KEY"))
-        add_value(st.secrets.get("API-GEMINI-KEYS"))
-    except Exception as e:
-        logger.info("Secrets Gemini tidak ditemukan (%s); narasi akan pakai fallback.", e)
-
-    seen = set()
-    unique_keys = []
-    for k in keys:
-        if k not in seen:
-            seen.add(k)
-            unique_keys.append(k)
-    return unique_keys
-
 MONTH_MAP = {'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6,
              'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12}
 INV_MONTH_MAP = {v: k for k, v in MONTH_MAP.items()}
@@ -182,8 +121,11 @@ def style_growth_table(df, header_color):
         return "" if pd.isna(v) else f"{v:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
 
     styler = df.style.format(fmt).background_gradient(cmap='RdYlGn', axis=None, vmin=-30, vmax=30)
+    # 'th' mencakup header kolom DAN nama baris (row_heading) -> keduanya hitam.
+    # Header wajib background terang: hitam di atas emas tua hanya 5.5:1, di atas
+    # merah tua hanya 1.8:1, sedangkan putih di atas emas hanya 2.4:1 (gagal AA).
     styler = styler.set_table_styles([
-        {'selector': 'th', 'props': [('background-color', header_color), ('color', 'white'),
+        {'selector': 'th', 'props': [('background-color', header_color), ('color', '#0F172A'),
                                       ('font-weight', 'bold'), ('text-align', 'center')]},
         {'selector': 'td', 'props': [('text-align', 'right')]}
     ])
@@ -278,7 +220,12 @@ def generate_section_narrative_ai(moda_nama, bln, thn, prev_bln, prev_thn,
             except Exception as e:
                 logger.warning("Gagal dengan Key ke-%d menggunakan model %s: %s", current_idx + 1, model_name, e)
                 continue
-            
+
+    # Semua Gemini key gagal -> coba OpenRouter sebagai cadangan.
+    backup = openrouter_generate(prompt, temperature=0.3)
+    if backup:
+        return backup
+
     return None                                       
 
 
@@ -407,7 +354,7 @@ def show_section(engine, table, moda_title, icon, header_color,
         st.dataframe(style_growth_table(tbl1, header_color), width='stretch')
     with t2:
         tbl2 = build_growth_table(df_curr, df_prev, cols_barang, labels_barang, periode_label)
-        st.dataframe(style_growth_table(tbl2, "#C0392B" if header_color != "#C0392B" else "#7B241C"), width='stretch')
+        st.dataframe(style_growth_table(tbl2, "#FECACA"), width='stretch')
 
     satuan_barang = "ton" if moda_title == "Laut" else "kg"
     render_section_narrative(
@@ -446,7 +393,7 @@ def show_dashboard_page():
     st.markdown("---")
 
     show_section(
-        engine, 'transportasi_laut', "Laut", "🚢", "#B8860B",
+        engine, 'transportasi_laut', "Laut", "🚢", "#FDE68A",
         cols_penumpang=['dn_penumpang_naik', 'dn_penumpang_turun'],
         labels_penumpang=['PENUMPANG BERANGKAT', 'PENUMPANG DATANG'],
         colors_penumpang=['#B8860B', '#FFC72C'],
@@ -459,7 +406,7 @@ def show_dashboard_page():
     st.markdown("---")
 
     show_section(
-        engine, 'transportasi_udara', "Udara", "✈️", "#D4A017",
+        engine, 'transportasi_udara', "Udara", "✈️", "#FDE68A",
         cols_penumpang=['penumpang_berangkat', 'penumpang_datang'],
         labels_penumpang=['PENUMPANG BERANGKAT', 'PENUMPANG DATANG'],
         colors_penumpang=['#FFC72C', '#FFE699'],

@@ -19,14 +19,9 @@ load_project_env()
 DEFAULT_LOCAL_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "app_data.db"
 
 
-def _read_secret(key):
-    """st.secrets raises if no secrets.toml exists at all, so this stays safe."""
-    return read_secret(key)
-
-
 def get_engine():
     # Ambil connection string dari st.secrets, environment variable, atau fallback lokal
-    db_url = _read_secret("DATABASE_URL") or os.getenv("DATABASE_URL")
+    db_url = read_secret("DATABASE_URL") or os.getenv("DATABASE_URL")
 
     # Fallback jika menggunakan format postgres:// ubah jadi postgresql://
     if db_url and db_url.startswith("postgres://"):
@@ -40,6 +35,19 @@ def get_engine():
 
     connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
     return create_engine(db_url, connect_args=connect_args)
+
+
+def is_local_dummy_db():
+    """True when get_engine() fell back to the local SQLite file.
+
+    That file holds deterministic placeholder rows, not published BPS figures.
+    A report generated from it must be labelled as dummy rather than shipped,
+    so callers check this at the point of export.
+    """
+    db_url = read_secret("DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not db_url:
+        return True
+    return db_url.startswith("sqlite")
 
 
 def init_db():

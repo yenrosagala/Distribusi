@@ -26,7 +26,7 @@ import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-
+from urllib.parse import quote, unquote
 import numpy as np
 import pandas as pd
 from lxml import etree
@@ -160,10 +160,6 @@ def _parse(b):
 
 def _dump(root):
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-
-def _content_texts(el):
-    return [c for c in el.iter("Content")]
 
 
 def _normalize_csr(psr):
@@ -548,51 +544,69 @@ def _clean_narr(p):
     return re.sub(r"^\*\(.*?\)\*\n\n", "", p or "").strip()
 
 
-def _embed_image(files, order, data, name, prov, thn, bln, token, label, warnings):
+def _embed_image(files, order, data, name, prov, thn, bln, token, label, warnings,
+                 nama_paket=None):
     """Taruh satu gambar ke dalam paket IDML dan arahkan <Link> ke file tersebut.
 
-    Template mengaitkan QR dan Infografis ke path absolut 'file:D:/BPS/...' di luar
-    paket, sehingga keduanya hilang/missing link saat .idml dibuka di mesin lain.
-    Di sini filenya ditulis ke folder Links/ di dalam paket dan LinkResourceURI
-    diganti ke path relatif. `token` = potongan nama file yang dicari di template
-    ('qrcode' atau 'Infografis').
+    Template mengaitkan QR, Infografis, dan grafik ke path absolut 'file:D:/BPS/...'
+    di luar paket, sehingga semuanya hilang/missing link saat .idml dibuka di mesin
+    lain. Di sini filenya ditulis ke folder Links/ di dalam paket dan LinkResourceURI
+    diganti ke path relatif.
+
+    ``token`` = potongan awal nama file di Links/ yang dicari ('qrcode',
+    'Infografis', 'TPK Series Hotel Bintang'). Pencocokan dilakukan pada nama file
+    yang sudah di-decode: template meng-encode-URL nama tersebut
+    ('TPK%20Series%20Hotel%20Bintang.png', '95%20Infografis%20...jpg'), jadi
+    mencocokkan byte mentah tidak pernah menemukan token yang mengandung spasi
+    atau angka di depan.
+
+    ``nama_paket`` dipakai aset yang nama asli templat HARUS dipertahankan (grafik).
+    META-INF/metadata.xml menjelaskan tiap aset lewat <stRef:lastURL> yang berakhiran
+    'Links/TPK Series Hotel Bintang.png'; kalau file di paket diberi nama lain,
+    InDesign mencari nama yang tidak ada dan menandai link hilang. QR/Infografis tetap
+    memakai slug unik karena ditaburkan ke satu folder bersama hasil ekspor lain.
     """
     if not data:
         return False
     m = re.search(r"\.(png|jpe?g)$", name or "", re.I)
     ext = "." + m.group(1).lower() if m else ".png"
-    slug = f"{token}-Transportasi-Bulan-{bln}-{thn}-Provinsi-{prov}"
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", slug).strip("_")
-    link_path = f"Links/{slug}{ext}"
+    if nama_paket:
+        link_path = f"Links/{nama_paket}"
+    else:
+        slug = f"{token}-Transportasi-Bulan-{bln}-{thn}-Provinsi-{prov}"
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "_", slug).strip("_")
+        link_path = f"Links/{slug}{ext}"
     files[link_path] = data
     if link_path not in order:
         order.append(link_path)
 
-    # XML spread/master yang punya <Image> dengan <Link> ke file <token>*.
-    # Prefix absolut "file:.../Links/" dibuang supaya tautan relatif ke file di paket.
-    pat = re.compile(rb'<Link\b[^>]*?LinkResourceURI="file:[^"]*?/Links/'
-                     + token.encode() + rb'[^"]*?"[^>]*?/>')
+    fmt = (b'$ID/JPEG' if ext in (".jpg", ".jpeg")
+           else b'$ID/Portable Network Graphics (PNG)')
+    tag_re = re.compile(rb"<Link\b[^>]*?/>")
+    # LinkResourceURI harus URL-encoded; nama file ZIP tidak.
+    uri_pakai = quote(link_path, safe="/").encode()
+
+    def repl(m):
+        tag = m.group(0)
+        uri = re.search(r'LinkResourceURI="([^"]*)"', tag.decode("utf-8", "replace"))
+        if not uri:
+            return tag
+        base = unquote(uri.group(1)).rsplit("/", 1)[-1]
+        if not base.startswith(token):
+            return tag
+        tag = re.sub(rb'LinkResourceURI="[^"]*"',
+                     b'LinkResourceURI="' + uri_pakai + b'"', tag)
+        return re.sub(rb'LinkResourceFormat="[^"]*"',
+                      b'LinkResourceFormat="' + fmt + b'"', tag)
+
     patched = 0
     for nm in list(files):
         if not (nm.startswith(("Spreads/", "MasterSpreads/")) and nm.endswith(".xml")):
             continue
         blob = files[nm]
-        if b"LinkResourceURI" not in blob or token.encode() not in blob:
+        if b"LinkResourceURI" not in blob:
             continue
-
-        def repl(m):
-            tag = m.group(0)
-            tag = re.sub(rb'LinkResourceURI="[^"]*"',
-                         b'LinkResourceURI="' + link_path.encode() + b'"', tag)
-            if ext in (".jpg", ".jpeg"):
-                tag = re.sub(rb'LinkResourceFormat="[^"]*"',
-                             b'LinkResourceFormat="$ID/JPEG"', tag)
-            else:
-                tag = re.sub(rb'LinkResourceFormat="[^"]*"',
-                             b'LinkResourceFormat="$ID/Portable Network Graphics (PNG)"', tag)
-            return tag
-
-        new = pat.sub(repl, blob)
+        new = tag_re.sub(repl, blob)
         if new != blob:
             files[nm] = new
             patched += 1
@@ -602,6 +616,23 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
         warnings.append(f"{label} diunggah tapi <Link> {token}-* tidak ditemukan di template — "
                         f"ganti gambarnya secara manual di InDesign.")
     return patched > 0
+
+
+def paket_zip(idml_bytes, nama_idml):
+    """ZIP berisi .idml plus semua aset gambarnya di folder PNG/.
+
+    IDML sudah membawa Links/ sendiri, tapi saat InDesign tidak menautkan otomatis,
+    PNG terpisah memudahkan placing manual untuk memastikan gambar atau tautannya
+    yang bermasalah. Nama file PNG sengaja sama dengan yang ada di Links/.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(nama_idml, idml_bytes)
+        with zipfile.ZipFile(io.BytesIO(idml_bytes)) as paket:
+            for n in sorted(paket.namelist()):
+                if n.startswith("Links/") and not n.endswith("/"):
+                    z.writestr(f"PNG/{n.rsplit('/', 1)[-1]}", paket.read(n))
+    return buf.getvalue()
 
 
 def fill_brs_template(template_bytes, prov, thn, bln, items, kab_lookup,

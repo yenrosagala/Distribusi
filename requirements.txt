@@ -1,6 +1,6 @@
-streamlit
+# >=1.61: tab role selectors ([role="tab"] / aria-selected) back the readability fix
+streamlit>=1.61
 pandas
-jinja2>=3.1.5
 python-dotenv
 numpy
 plotly
@@ -11,9 +11,8 @@ sqlalchemy
 
 google-genai
 openpyxl
-xlrd
 lxml
-tabulate
 matplotlib
 python-docx>=1.1.0
 psycopg[binary]
+requests>=2.31
