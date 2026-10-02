@@ -10,8 +10,13 @@ import logging
 from google import genai
 from sqlalchemy import text
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
+from modules.ai_backup import get_openrouter_key, openrouter_generate
 from modules.config import PEMETAAN_WILAYAH, get_location_metadata
-from modules.indesign_export import fill_brs_template, DEFAULT_TEMPLATE as DEFAULT_IDML_TEMPLATE
+from modules.indesign_export import (
+    fill_brs_template,
+    paket_zip,
+    DEFAULT_TEMPLATE as DEFAULT_IDML_TEMPLATE,
+)
 from pathlib import Path
 from datetime import datetime
 
@@ -179,20 +184,15 @@ def build_brs_display_table(report_flat, prov, moda):
     col_prev, col_curr = raw_cols[0], raw_cols[1]
     col_cum_prev, col_cum_curr = raw_cols[2], raw_cols[3]
     
-    # float cast: kolom hasil agregasi bisa bertipe object/nullable, dan pada dtype
-    # itu 0 / 0 memanggil operator Python -> ZeroDivisionError yang tidak bisa
-    # ditekan np.errstate (hanya berlaku untuk operasi numpy-native).
+    # percent change via helper: 0/0 -> NaN (numeric, supaya background_gradient
+    # tidak gagal), lalu teks "undefined" muncul saat diformat di tabel.
     prev_vals_res = res[col_prev].values.astype(float)
     curr_vals_res = res[col_curr].values.astype(float)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mtm_res = np.where(prev_vals_res == 0, np.nan, ((curr_vals_res - prev_vals_res) / prev_vals_res) * 100)
-    res['M-to-M (%)'] = pd.Series(mtm_res, index=res.index).replace([np.inf, -np.inf], np.nan)
+    res['M-to-M (%)'] = [safe_pct_change(c, p) for c, p in zip(curr_vals_res, prev_vals_res)]
     
     cum_prev_vals_res = res[col_cum_prev].values.astype(float)
     cum_curr_vals_res = res[col_cum_curr].values.astype(float)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        yoy_res = np.where(cum_prev_vals_res == 0, np.nan, ((cum_curr_vals_res - cum_prev_vals_res) / cum_prev_vals_res) * 100)
-    res['Y-on-Y (%)'] = pd.Series(yoy_res, index=res.index).replace([np.inf, -np.inf], np.nan)
+    res['Y-on-Y (%)'] = [safe_pct_change(c, p) for c, p in zip(cum_curr_vals_res, cum_prev_vals_res)]
     
     return res[[col_prev, col_curr, 'M-to-M (%)', col_cum_prev, col_cum_curr, 'Y-on-Y (%)']]
 
@@ -222,6 +222,66 @@ def get_comparison_data(prov, thn, bln, moda):
     df_cum_prev = pd.read_sql(text(q_cum_prev), engine, params={"prov": prov.upper(), "prev_thn_full": str(thn_int - 1), **month_params})
 
     return df_curr, df_prev, df_cum_curr, df_cum_prev, prev_bln_name, prev_thn
+
+# Divide-by-zero has no numeric answer; every consumer renders this one string.
+UNDEFINED = "undefined"
+
+
+def _union_index(*series):
+    """Ordered union of several pandas Series indexes.
+
+    Keeps first-seen order (current period first) and de-dupes, so a category
+    present in any period yields exactly one row. Plain `Index.union` would sort,
+    which would reshuffle every table the moment one extra row appears.
+    """
+    seen, out = set(), []
+    for s in series:
+        for key in s.index:
+            if key not in seen:
+                seen.add(key)
+                out.append(key)
+    return pd.Index(out)
+
+
+def safe_pct_change(curr, prev):
+    """Percentage change as float, or NaN when it is undefined (0/0, 0->x).
+
+    Returns NaN rather than a string on purpose. The percent columns feed
+    `styler.background_gradient`, which raises
+    "could not convert string to float" on an object-dtype column, so writing
+    the literal "undefined" into the cell breaks the whole table. The string is
+    added at the display layer by `format_pct_number` instead.
+
+    float() per cell, not numpy broadcasting: an aggregated column can be
+    object/nullable dtype, where 0 / 0 calls Python's operator and raises
+    ZeroDivisionError — which np.errstate cannot suppress.
+    """
+    try:
+        c, p = float(curr), float(prev)
+    except (TypeError, ValueError):
+        return np.nan
+    if p == 0 or np.isnan(p) or np.isnan(c) or np.isinf(c):
+        return np.nan
+    result = (c - p) / p * 100
+    return np.nan if np.isinf(result) else result
+
+
+def format_pct_number(x, decimals=2):
+    """Display value for a percent cell: `undefined` when there is no number.
+
+    A 0/0 change is not "missing data" — saying so with an empty cell makes a
+    real growth-from-zero look like a reporting gap. Render the word instead.
+    """
+    if x is None or (isinstance(x, str) and x.strip().lower() == 'undefined'):
+        return UNDEFINED
+    try:
+        val = float(x)
+    except (TypeError, ValueError):
+        return UNDEFINED
+    if np.isnan(val) or np.isinf(val):
+        return UNDEFINED
+    return format_id_number(val, decimals)
+
 
 def format_id_number(x, decimals=2):
     if pd.isna(x) or str(x).lower() in ['nan', 'inf', '-inf', 'undefined']:
@@ -264,8 +324,9 @@ def table_formatters(columns, col_target):
     # satu sel untuk `c`, jadi semua lambda-nya lihat kolom terakhir dan tiap
     # kolom dapat desimal yang sama.
     def make(col):
-        dec = 2 if '(%)' in str(col) else _SATUAN_DESIMAL.get(satuan, 2)
-        return lambda x: format_id_number(x, dec)
+        is_pct = '(%)' in str(col)
+        dec = 2 if is_pct else _SATUAN_DESIMAL.get(satuan, 2)
+        return (lambda x: format_pct_number(x, dec)) if is_pct else (lambda x: format_id_number(x, dec))
 
     return {c: make(c) for c in columns}
 
@@ -384,8 +445,10 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
         return db_text, "Database (Cached)"
 
     api_keys = get_gemini_api_keys()
-    if not api_keys:
+    if not api_keys and not get_openrouter_key():
         return None, "No API Key"
+    # api_keys boleh kosong: loop Gemini di bawah lalu tidak jalan dan langsung
+    # jatuh ke cadangan OpenRouter. Jangan return di sini.
 
     candidate_models = [
         "gemini-2.5-flash",
@@ -436,7 +499,13 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
             except Exception as e:
                 logger.warning("Gagal pada Report dengan Key ke-%d menggunakan model %s: %s...", current_idx + 1, model_name, e)
                 continue
-            
+
+    # Semua Gemini key gagal -> coba OpenRouter sebagai cadangan.
+    backup = openrouter_generate(prompt, temperature=0.2)
+    if backup:
+        save_db_narrative(report_type, period_key, backup)
+        return backup, "OpenRouter (Cadangan)"
+
     return None, "Failed"
 
 def generate_narrative_fallback(report_flat, col_target, moda, region_label, bln, thn, prev_bln, prev_thn,
@@ -557,8 +626,13 @@ def create_complete_master_word_report(prov, thn, bln, all_report_data):
             for j, val in enumerate(row_data):
                 if j == 0:
                     row_cells[j].text = str(val) if not pd.isna(val) else ""
+                elif is_separator_row or val == "":
+                    row_cells[j].text = ""
                 else:
-                    row_cells[j].text = "" if is_separator_row else (format_id_number(val, decimals=2) if val != "" else "")
+                    # pct kolom ikut "undefined" supaya .idml sama dengan tabel web
+                    is_pct = '(%)' in str(df_to_export.columns[j]).upper()
+                    fmt = format_pct_number if is_pct else format_id_number
+                    row_cells[j].text = fmt(val, decimals=2)
                          
         doc.add_paragraph()
         if p2:
@@ -581,7 +655,12 @@ def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, l
     cum_curr_grp = df_cum_curr.groupby(row_col)[col_target].sum() / divisor
     cum_prev_grp = df_cum_prev.groupby(row_col)[col_target].sum() / divisor
 
-    report = pd.DataFrame(index=curr_grp.index)
+    # Every category must appear even when its value is 0. Indexing on the union
+    # of all four series (instead of curr_grp alone) keeps an entity that only
+    # has data in an earlier period on the table, where it reads as 0 rather than
+    # vanishing. Current-period order first, then anything new, so the visible
+    # ordering is unchanged for tables that were already complete.
+    report = pd.DataFrame(index=_union_index(curr_grp, prev_grp, cum_curr_grp, cum_prev_grp))
     col_curr, col_prev = f"{bln} {thn}", f"{prev_bln} {prev_thn}"
     col_cum_curr, col_cum_prev = f"Jan-{bln} {thn}", f"Jan-{bln} {int(thn)-1}"
 
@@ -590,31 +669,28 @@ def prepare_table_item(df_curr, df_prev, df_cum_curr, df_cum_prev, col_target, l
     
     # float cast: kolom hasil agregasi bisa bertipe object/nullable, dan pada dtype
     # itu 0 / 0 memanggil operator Python -> ZeroDivisionError yang tidak bisa
-    # ditekan np.errstate. np.where juga mengevaluasi kedua cabang selalu.
+    # ditekan np.errstate (hanya berlaku untuk operasi numpy-native).
     prev_vals = report[col_prev].values.astype(float)
     curr_vals = report[col_curr].values.astype(float)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        mtm_pct = np.where(prev_vals == 0, np.nan, ((curr_vals - prev_vals) / prev_vals) * 100)
-    report['M-to-M (%)'] = pd.Series(mtm_pct, index=report.index).replace([np.inf, -np.inf], np.nan)
+    report['M-to-M (%)'] = [safe_pct_change(c, p) for c, p in zip(curr_vals, prev_vals)]
 
     report[col_cum_prev] = cum_prev_grp.reindex(report.index).fillna(0)
     report[col_cum_curr] = cum_curr_grp.reindex(report.index).fillna(0)
     
     cum_prev_vals = report[col_cum_prev].values.astype(float)
     cum_curr_vals = report[col_cum_curr].values.astype(float)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        yoy_pct = np.where(cum_prev_vals == 0, np.nan, ((cum_curr_vals - cum_prev_vals) / cum_prev_vals) * 100)
-    report['Y-on-Y (%)'] = pd.Series(yoy_pct, index=report.index).replace([np.inf, -np.inf], np.nan)
+    report['Y-on-Y (%)'] = [safe_pct_change(c, p) for c, p in zip(cum_curr_vals, cum_prev_vals)]
 
-    # ponytail: totals come from the full grouped series, not report[...] — report is
-    # indexed by curr period only, so a prev-only entity would be dropped from the total.
+    # ponytail: totals come from the full grouped series, not report[...] — the
+    # union index exists so a prev-only entity still shows as a row, but summing
+    # the groups is what guarantees the total matches the source data.
     sum_prev = prev_grp.sum()
     sum_curr = curr_grp.sum()
     sum_cum_prev = cum_prev_grp.sum()
     sum_cum_curr = cum_curr_grp.sum()
 
-    total_mtm = ((sum_curr - sum_prev) / sum_prev * 100) if sum_prev != 0 else np.nan
-    total_yoy = ((sum_cum_curr - sum_cum_prev) / sum_cum_prev * 100) if sum_cum_prev != 0 else np.nan
+    total_mtm = safe_pct_change(sum_curr, sum_prev)
+    total_yoy = safe_pct_change(sum_cum_curr, sum_cum_prev)
 
     total_row = pd.DataFrame([{
         col_prev: sum_prev, col_curr: sum_curr, 'M-to-M (%)': total_mtm,
@@ -736,17 +812,17 @@ def _kab_lookup_brs(name):
 
 def render_indesign_export(meta, all_collected_data):
     # CSS injection to make dark button text clearly visible (white)
+    # Hanya tombol berlatar gelap/amber yang jadi putih. Tombol putih (sidebar,
+    # secondary, unduh) harus tetap tinta gelap — putih di atas putih hilang.
     st.markdown("""
         <style>
-        /* Force white text inside buttons and dark action components */
-        div.stButton > button, 
-        div.stDownloadButton > button,
-        [data-testid="stFileUploaderDropzone"] {
+        div[data-testid="stMain"] .stButton>button[kind="primary"],
+        div[data-testid="stMain"] .stButton>button[kind="primary"] * {
             color: #FFFFFF !important;
         }
-        div.stButton > button *, 
-        div.stDownloadButton > button * {
-            color: #FFFFFF !important;
+        div[data-testid="stDownloadButton"] button,
+        div[data-testid="stDownloadButton"] button * {
+            color: #0F172A !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -838,10 +914,12 @@ def render_indesign_export(meta, all_collected_data):
     stored = st.session_state.get('idml_result')
     if stored:
         res, m = stored
+        nama_idml = f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.idml"
         st.download_button(
-            "📥 Download Template Terisi (.idml)", data=res.idml_bytes,
-            file_name=f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.idml",
-            mime="application/vnd.adobe.indesign-idml-package",
+            "📦 Download Paket (.zip: .idml + PNG)", data=paket_zip(res.idml_bytes, nama_idml),
+            file_name=f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.zip",
+            mime="application/zip",
+            key="dl_zip_trans",
         )
         with st.expander(f"⚠️ {len(res.warnings)} hal yang perlu dicek di InDesign"):
             for w in res.warnings:

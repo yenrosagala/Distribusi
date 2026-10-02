@@ -193,11 +193,14 @@ with st.sidebar:
 
   st.markdown("<br>", unsafe_allow_html=True)
 
-  ai_online = None
+  ai_online = False
   try:
     from pariwisata.ai import get_gemini_client
+    from modules.ai_backup import get_openrouter_key
 
-    ai_online = get_gemini_client() is not None
+    # Online bila salah satu provider tersambung; OpenRouter ada sebagai
+    # cadangan, jadi status tidak boleh padam hanya karena Gemini mati.
+    ai_online = get_gemini_client() is not None or bool(get_openrouter_key())
   except Exception:
     ai_online = False
   ai_status = "AI Engine Online" if ai_online else "AI Engine Offline"
@@ -258,7 +261,6 @@ if section == "pariwisata":
   tab_labels = [
       "🏠 Home Dashboard",
       "🗺️ Infographic Stat Map",
-      "📈 Trends Visualizations",
       "📋 Report",
   ]
   if st.session_state["role"] == "admin":
@@ -274,15 +276,11 @@ if section == "pariwisata":
         etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
     )
   with tabs[2]:
-    pariwisata_pages.render_trends(
-        etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
-    )
-  with tabs[3]:
     pariwisata_pages.render_report(
         etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
     )
   if st.session_state["role"] == "admin":
-    with tabs[4]:
+    with tabs[3]:
       pariwisata_pages.render_admin_etl(
           etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
       )

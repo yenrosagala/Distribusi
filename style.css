@@ -12,8 +12,15 @@
     --line:       #E2E8F0;
     --primary:    #F59E0B;
     --primary-dark:#D97706;
-    --positive:   #10B981;
-    --negative:   #EF4444;
+    /* Warna semantik harus gelap agar teks kecil (12px/700) di badge lolos
+       WCAG AA 4.5:1. Versi terang #10B981/#EF4444 hanya 2.41:1 dan 3.44:1. */
+    --positive:   #047857;
+    --negative:   #B91C1C;
+    --positive-bg:#ECFDF5;
+    --positive-line:#A7F3D0;
+    --negative-bg:#FEF2F2;
+    --negative-line:#FECACA;
+    --surface-2:  #F1F5F9;
     --map-bg:     #0B0F14;
 }
 
@@ -31,7 +38,7 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
 .brand-block{ display:flex; align-items:center; gap:10px; margin-bottom:2px; }
 .brand-mark{
     width:40px; height:40px; border-radius:10px;
-    background: var(--primary); color:#fff;
+    background: var(--primary); color:var(--ink);
     display:flex; align-items:center; justify-content:center; font-size:19px;
 }
 .sidebar-title{ font-size:16px; font-weight:800; color:var(--ink); margin:0; line-height:1.2; }
@@ -48,12 +55,19 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
     box-shadow: none !important;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
-[data-testid="stSidebar"] .stButton>button:focus{ outline:none !important; box-shadow:none !important; }
+/* Fokus keyboard: outline bawaan sebelumnya dimatikan (WCAG 2.4.7 fail),
+   jadi diganti cincin fokus kontras tinggi di atas permukaan terang. */
+.stButton>button:focus-visible,
+[data-testid="stSidebar"] .stButton>button:focus-visible{
+    outline: 3px solid var(--ink) !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+}
 
 /* Active section */
 [data-testid="stSidebar"] .stButton>button[kind="primary"]{
     background: var(--primary) !important;
-    color: #fff !important;
+    color: var(--ink) !important;
     border: none !important;
 }
 [data-testid="stSidebar"] .stButton>button[kind="primary"]:hover{ background: var(--primary-dark) !important; }
@@ -113,14 +127,10 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
     border: 1px solid var(--line) !important;
     background: var(--surface) !important;
 }
-.filter-pill [data-baseweb="select"] > div{
-    background: var(--ink) !important;
-    border-radius: 999px !important;
-    border: none !important;
-    color: #fff !important;
-}
-.filter-pill [data-baseweb="select"] span{ color: #fff !important; }
-.filter-pill svg{ fill:#fff !important; }
+/* Catatan: aturan "filter pill" gelap ([data-baseweb="select"]) dan styling
+   selectbox kloning dihapus — atribut data-baseweb tidak lagi ditulis
+   Streamlit >=1.5x, jadi aturan itu tidak pernah tampil dan hanya menyesatkan.
+   Selectbox sekarang memakai tampilan bawaan Streamlit yang sudah netral. */
 
 /* ---------- page title ---------- */
 .hero-title{ font-size:26px; font-weight:800; color:var(--ink); margin:18px 0 16px 0; }
@@ -133,42 +143,49 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
 }
 .section-icon{
     width:46px; height:46px; min-width:46px; border-radius:12px;
-    background: var(--primary); color:#fff;
+    background: var(--primary); color:var(--ink);
     display:flex; align-items:center; justify-content:center; font-size:22px;
 }
 .section-title{ font-size:24px; font-weight:800; color:var(--ink); line-height:1.2; }
 .section-subtitle{ font-size:13px; color:var(--ink-dim); margin-top:2px; }
 
-/* ---------- tabs — the in-page navigation for each section ---------- */
-[data-testid="stTabs"] [data-baseweb="tab-list"]{
-    gap: 4px;
+/* ---------- tabs — the in-page navigation for each section ----------
+   Penting: Streamlit >=1.5x tidak lagi menulis atribut data-baseweb, jadi
+   selector [data-baseweb="tab"] mati. DOM sekarang pakai role="tab" +
+   aria-selected di dalam [data-testid="stTabs"]. File ini sebelumnya punya
+   DUA blok tab yang saling menimpa; sekarang satu blok saja. */
+[data-testid="stTabs"] [role="tablist"]{
+    gap: 8px;
+    background-color: var(--surface-2);
+    padding: 6px;
+    border-radius: 10px;
     border-bottom: 1px solid var(--line);
     margin-bottom: 22px;
 }
-[data-testid="stTabs"] [data-baseweb="tab"]{
-    height: 46px;
-    padding: 0 18px;
-    border-radius: 10px 10px 0 0;
+[data-testid="stTabs"] [role="tab"]{
+    padding: 8px 16px;
+    border-radius: 8px;
     font-weight: 600;
     font-size: 14.5px;
-    color: var(--ink-dim);
     background: transparent;
 }
-[data-testid="stTabs"] [data-baseweb="tab"]:hover{
-    color: var(--primary-dark);
-    background: var(--bg);
+/* Warna teks dipaksa: Streamlit menyuntik warna sendiri lewat emotion, dan
+   ikut warna tema browser (terang/gelap) sehingga teks bisa sama dengan
+   background. !important needed to win over the injected style. */
+[data-testid="stTabs"] [role="tab"],
+[data-testid="stTabs"] [role="tab"] *{
+    color: var(--ink) !important;
 }
-[data-testid="stTabs"] [aria-selected="true"]{
-    color: var(--primary-dark) !important;
-    background: var(--bg);
+[data-testid="stTabs"] [role="tab"]:hover{
+    background: var(--surface-2);
+}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"]{
+    background: var(--primary) !important;
+    color: var(--ink) !important;
     font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
-[data-testid="stTabs"] [data-baseweb="tab-highlight"]{
-    background-color: var(--primary) !important;
-    height: 3px;
-}
-[data-testid="stTabs"] [data-baseweb="tab-border"]{ display:none; }
-[data-testid="stTabs"] [data-testid="stTabsPanel"]{ padding-top: 6px; }
+[data-testid="stTabs"] [role="tabpanel"]{ padding-top: 6px; }
 
 /* ---------- province stat cards (matches original spec) ---------- */
 .province-card{
@@ -181,7 +198,7 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
 }
 .province-header{
     background: var(--primary);
-    color: #ffffff;
+    color: var(--ink);
     font-weight: 700;
     font-size: 13px;
     letter-spacing: 0.06em;
@@ -199,13 +216,13 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
 .stat-delta-na{ font-size:12px; color:var(--ink-dim); }
 
 .badge-up{
-    background-color: #ECFDF5; color: var(--positive);
-    border: 1px solid #A7F3D0;
+    background-color: var(--positive-bg); color: var(--positive);
+    border: 1px solid var(--positive-line);
     padding: 3px 9px; border-radius: 999px; font-weight:700; font-size:12px;
 }
 .badge-down{
-    background-color: #FEF2F2; color: var(--negative);
-    border: 1px solid #FECACA;
+    background-color: var(--negative-bg); color: var(--negative);
+    border: 1px solid var(--negative-line);
     padding: 3px 9px; border-radius: 999px; font-weight:700; font-size:12px;
 }
 
@@ -240,13 +257,20 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
 }
 
 /* ---------- misc widget overrides ---------- */
+/* ---------- primary button — SATU-SATUNYA definisi untuk area main ----------
+   Versi lama punya tiga blok berbeda (sidebar amber, ini, dan gradient biru
+   #2563EB) sehingga satu halaman menampilkan tombol biru dan amber sekaligus.
+   Sekarang semua primary button = amber + teks ink (8.31:1). */
 .stButton>button[kind="primary"]{
     background: var(--primary) !important;
-    color: #fff !important;
+    color: var(--ink) !important;
     border: none !important;
     border-radius: 8px !important;
     font-weight:700 !important;
+    padding: 0.6rem 1.2rem !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 }
+.stButton>button[kind="primary"]:hover{ background: var(--primary-dark) !important; }
 [data-testid="stMetricValue"]{ color: var(--primary-dark); }
 hr{ border-color: var(--line) !important; }
 
@@ -283,21 +307,16 @@ hr{ border-color: var(--line) !important; }
     font-weight: 600 !important;
 }
 
-/* 3. Refined Selectbox & Dropdown Controls */
-[data-baseweb="select"] > div {
-    border-radius: 10px !important;
-    border-color: var(--line) !important;
-    background-color: var(--surface) !important;
-}
+/* 3. Refined Selectbox & Dropdown Controls — lihat catatan di blok search bar:
+   selector data-baseweb sudah mati, jadi tidak ada duplikat di sini. */
 
 /* 4. Enhanced Tab Navigation Readability */
-[data-testid="stTabs"] [data-baseweb="tab"] {
+[data-testid="stTabs"] [role="tab"] {
     transition: color 0.15s ease, background-color 0.15s ease;
 }
 
 /* Global background & font styling */
     .stApp {
-        background-color: #f8fafc;
         font-family: 'Inter', sans-serif;
     }
     
@@ -307,73 +326,8 @@ hr{ border-color: var(--line) !important; }
         border-radius: 12px;
     }
     
-    /* Elevate Primary Buttons */
-    div.stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: 600;
-        padding: 0.6rem 1.2rem;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-        transition: all 0.3s ease;
-    }
-    div.stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
-        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
-        transform: translateY(-1px);
-    }
-
-    /* Secondary Buttons */
-    div.stButton > button:not([kind="primary"]) {
-        border-radius: 8px;
-        border: 1px solid #cbd5e1;
-        font-weight: 500;
-        color: #334155;
-        background-color: #ffffff;
-    }
-    div.stButton > button:not([kind="primary"]):hover {
-        background-color: #f1f5f9;
-        border-color: #94a3b8;
-    }
-
-    /* File Uploader Box Styling */
-    div[data-testid="stFileUploader"] {
-        border: 2px dashed #cbd5e1;
-        border-radius: 12px;
-        padding: 1.5rem;
-        background-color: #ffffff;
-        text-align: center;
-    }
-    div[data-testid="stFileUploader"]:hover {
-        border-color: #2563eb;
-        background-color: #f8fafc;
-    }
-
-    /* Metric Card Polish */
-    div[data-testid="stMetric"] {
-        background-color: #ffffff;
-        padding: 1rem;
-        border-radius: 10px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
+    /* Blok primary/secondary/uploader/metric versi biru (#2563eb) yang tadinya
+       ada di sini sudah dihapus: duplikat definisi token di atas, dan itulah
+       sumber "tombol biru vs amber" yang Anda lihat. */
     
-    /* Tabs Styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: #f1f5f9;
-        padding: 6px;
-        border-radius: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        color: #475569;
-        font-weight: 600;
-        padding: 8px 16px;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important;
-        color: #2563eb !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-    }
+    /* Tabs Styling — dihapus, duplikat dari blok tab utama di atas. */

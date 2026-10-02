@@ -10,3 +10,7 @@ venv/
 
 # Test / tool caches
 .pytest_cache/
+
+# Local SQLite database -- machine-local artifact (may hold dummy/seed data).
+# Real data lives in Postgres via DATABASE_URL; never commit this file.
+data/*.db
