@@ -163,8 +163,9 @@ hardcoded, so the suite survives the next InDesign re-export.
 Di halaman **Laporan Komparatif Strategis**, setelah laporan ditampilkan (Show Report), bagian
 **"Isi Template InDesign (BRS)"** mengisi template bawaan
 `templates/BRS_Transportasi_Template Folder/BRS_Transportasi_Template.idml`
-(atau file .idml yang diunggah) dengan provinsi, tahun, dan bulan terpilih: 8 tabel, narasi 2 paragraf per
+dengan provinsi, tahun, dan bulan terpilih: 8 tabel, narasi 2 paragraf per
 tabel, poin utama tiap bab, ringkasan cover, judul, dan header/footer halaman.
+Template tidak bisa diunggah dari UI — selalu pakai file bawaan itu.
 
 - Logika ada di `modules/indesign_export.py` (tanpa dependensi streamlit, bisa diuji terpisah).
 - Path template ada di satu konstanta, `DEFAULT_TEMPLATE`; `report_page.py` mengimpornya,

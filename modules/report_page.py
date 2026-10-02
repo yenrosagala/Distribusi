@@ -760,21 +760,11 @@ def render_indesign_export(meta, all_collected_data):
     
     with st.container(border=True):
         st.markdown("### 📋 Pengaturan & Berkas BRS")
-        c_tpl, c_info, c_qr = st.columns(3)
+        c_info, c_qr = st.columns(2)
         
-        with c_tpl:
-            with st.container(border=True):
-                st.markdown("**1. Template IDML**")
-                up = st.file_uploader(
-                    "Unggah Template BRS (.idml)",
-                    type=["idml"],
-                    key="idml_tpl",
-                    help="Kosongkan untuk memakai template bawaan.",
-                )
-                
         with c_info:
             with st.container(border=True):
-                st.markdown("**2. Infografis**")
+                st.markdown("**1. Infografis**")
                 info_up = st.file_uploader(
                     "Unggah Gambar Infografis",
                     type=["png", "jpg", "jpeg"],
@@ -784,7 +774,7 @@ def render_indesign_export(meta, all_collected_data):
                 
         with c_qr:
             with st.container(border=True):
-                st.markdown("**3. Kode QR**")
+                st.markdown("**2. Kode QR**")
                 qr_up = st.file_uploader(
                     "Unggah Gambar Kode QR",
                     type=["png", "jpg", "jpeg"],
@@ -795,7 +785,7 @@ def render_indesign_export(meta, all_collected_data):
         c_no, c_tgl = st.columns(2)
         with c_no:
             with st.container(border=True):
-                st.markdown("**4. Nomor BRS**")
+                st.markdown("**3. Nomor BRS**")
                 nomor_brs = st.text_input(
                     "Nomor BRS",
                     key="idml_no",
@@ -805,7 +795,7 @@ def render_indesign_export(meta, all_collected_data):
                 
         with c_tgl:
             with st.container(border=True):
-                st.markdown("**5. Tanggal Rilis**")
+                st.markdown("**4. Tanggal Rilis**")
                 tgl_rilis = st.text_input(
                     "Tanggal Rilis",
                     key="idml_tgl",
@@ -813,22 +803,16 @@ def render_indesign_export(meta, all_collected_data):
                     label_visibility="collapsed"
                 )
                 
-        # Tampilkan sumber template
-        if up is not None:
-            st.caption(f"Template: **{up.name}** (unggah)")
-        elif DEFAULT_IDML_TEMPLATE.exists():
+        if DEFAULT_IDML_TEMPLATE.exists():
             st.caption(f"Template: **{DEFAULT_IDML_TEMPLATE.name}** (bawaan)")
         else:
-            st.caption("⚠️ Template bawaan tidak ditemukan — unggah file .idml.")
+            st.caption("⚠️ Template bawaan tidak ditemukan.")
 
     if st.button("🎨 Buat File InDesign (.idml)", width='stretch', key="btn_idml"):
-        if up is not None:
-            tpl_bytes = up.getvalue()
-        elif DEFAULT_IDML_TEMPLATE.exists():
-            tpl_bytes = DEFAULT_IDML_TEMPLATE.read_bytes()
-        else:
-            st.error("Template bawaan tidak ditemukan. Unggah file .idml.")
+        if not DEFAULT_IDML_TEMPLATE.exists():
+            st.error("Template bawaan tidak ditemukan.")
             return
+        tpl_bytes = DEFAULT_IDML_TEMPLATE.read_bytes()
         laut_ports = None
         try:
             df_laut = get_comparison_data(meta['prov'], meta['thn'], meta['bln'], "Transportasi Laut")[0]
