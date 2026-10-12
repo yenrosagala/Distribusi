@@ -17,6 +17,7 @@ Struktur paragraf template (hasil inspeksi, bukan asumsi):
     jadi ditulis dari teks jangkar agar definisinya tetap utuh.
 """
 import io
+import logging
 import re
 import zipfile
 from pathlib import Path
@@ -39,6 +40,10 @@ from modules.indesign_export import (
     replace_period_text,
     set_segments,
 )
+
+from pariwisata.etl_engine import PARIWISATA_REF_AVG
+
+logger = logging.getLogger(__name__)
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 # Satu paket BRS Papua Selatan dipakai untuk SEMUA provinsi — nama provinsi di
@@ -173,6 +178,30 @@ def total_kelas(rows):
     return ly, prev, cur, (cur - prev if _ada(cur, prev) else np.nan), (cur - ly if _ada(cur, ly) else np.nan)
 
 
+def total_blok(blok):
+    """Baris Total: angka resmi Prov_Jenis bila ada, kalau tidak rataan kelas."""
+    return blok.get("total") or total_kelas(blok["rows"])
+
+
+def _total_resmi(rows, ref, jenis, ind, periode):
+    """Total 5-tuple dengan sel periode yang punya rujukan ditimpa angka resmi.
+
+    ``periode`` = ((thn_lalu, bln), (bln_lalu, bln), (bulan ini, bln)). Angka resmi
+    BPS ada di ``pariwisata_ref_avg`` (sheet Prov_Jenis yang diunggah); sel tanpa
+    rujukan tetap rataan kelas. Persis baris Total di halaman web (lihat ai.py).
+    """
+    ly, prev, cur, _, _ = total_kelas(rows)
+    nilai = [ly, prev, cur]
+    for i, (thn_, bln_) in enumerate(periode):
+        resmi = (ref.get((jenis, thn_, bln_)) or {}).get(ind)
+        if resmi is not None and not pd.isna(resmi):
+            nilai[i] = float(resmi)
+    ly, prev, cur = nilai
+    return (ly, prev, cur,
+            cur - prev if _ada(cur, prev) else np.nan,
+            cur - ly if _ada(cur, ly) else np.nan)
+
+
 def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
     """PNG garis tren untuk satu frame grafik di template.
 
@@ -241,13 +270,35 @@ def deret_tabel(blok, jenis):
             cur - prev if _ada(cur, prev) else np.nan,
             cur - ly if _ada(cur, ly) else np.nan,
         ))
-    keluar.append((f"Total {jenis.replace('Hotel ', '')}", *total_kelas(rows)))
+    keluar.append((f"Total {jenis.replace('Hotel ', '')}", *total_blok(blok)))
     return keluar
 
 
 # ---------------------------------------------------------------------------
 # Pengambilan data
 # ---------------------------------------------------------------------------
+def _baca_ref(engine, prov):
+    """Nilai TPK/RLMTGAB resmi per (jenis, tahun, bulan) dari sheet Prov_Jenis.
+
+    Tabel belum ada di DB lama -> {} dan baris Total/grafik kembali ke rataan kelas.
+    """
+    try:
+        df = pd.read_sql_query(
+            text(f"SELECT jenis_akomodasi, year, month, tpk, rlmtgab "
+                 f"FROM {PARIWISATA_REF_AVG} WHERE kd_prov = :prov"),
+            engine, params={"prov": str(prov).strip()},
+        )
+    except Exception:
+        logger.warning("Gagal baca %s, Total pakai rataan kelas", PARIWISATA_REF_AVG,
+                       exc_info=True)
+        return {}
+    return {
+        (r.jenis_akomodasi, int(r.year), int(r.month)):
+            {"tpk": r.tpk, "rlmtgab": r.rlmtgab}
+        for r in df.itertuples()
+    }
+
+
 def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
     """Nilai tiap kelas hotel untuk 3 periode, per indikator.
 
@@ -280,6 +331,9 @@ def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
     if df.empty:
         return keluar
 
+    ref = _baca_ref(engine, prov)
+    periode = ((int(thn) - 1, bln_m), (int(prev_thn), BULAN_N[prev_bln]),
+               (int(thn), bln_m))
     for ind in INDIKATOR:
         for jenis in JENIS:
             sub = df[df["jenis_akomodasi"] == jenis]
@@ -288,25 +342,28 @@ def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
             kelas = sorted(
                 {int(k) for k in pd.to_numeric(sub["kelas_akomodasi"], errors="coerce").dropna()}
             )
+            rows = {
+                k: (
+                    _nilai(sub, k, ind, int(thn) - 1, bln_m),
+                    _nilai(sub, k, ind, int(prev_thn), BULAN_N[prev_bln]),
+                    _nilai(sub, k, ind, int(thn), bln_m),
+                ) for k in kelas
+            }
             keluar[(ind, jenis)] = {
-                "rows": {
-                    k: (
-                        _nilai(sub, k, ind, int(thn) - 1, bln_m),
-                        _nilai(sub, k, ind, int(prev_thn), BULAN_N[prev_bln]),
-                        _nilai(sub, k, ind, int(thn), bln_m),
-                    ) for k in kelas
-                },
-                "tren": _tren(sub, kelas, ind, int(thn), bln_m),
+                "rows": rows,
+                "total": _total_resmi(rows, ref, jenis, ind, periode),
+                "tren": _tren(sub, kelas, ind, int(thn), bln_m, ref=ref, jenis=jenis),
             }
     return keluar
 
 
-def _tren(sub, kelas, kolom, thn, bln_m):
+def _tren(sub, kelas, kolom, thn, bln_m, ref=None, jenis=None):
     """Deret bulanan Jan(thn-1)..bulan berjalan, rata-rata tidak berbobot kelas.
 
     Basisnya sama dengan baris Total di tabel (lihat ``total_kelas``) supaya angka
     pada grafik sama dengan tabel. Bulan tanpa data bernilai NaN, bukan 0 — garis
-    putus di bulan itu, bukan menyentuh sumbu nol.
+    putus di bulan itu, bukan menyentuh sumbu nol. Bulan yang punya angka resmi
+    (sheet Prov_Jenis) dipakai apa adanya, sama seperti halaman web.
     """
     keluar = []
     for thn_ in (thn - 1, thn):
@@ -314,7 +371,11 @@ def _tren(sub, kelas, kolom, thn, bln_m):
         for m in range(1, akhir + 1):
             vals = [_nilai(sub, k, kolom, thn_, m) for k in kelas]
             vals = [v for v in vals if not pd.isna(v)]
-            keluar.append((thn_, m, float(np.mean(vals)) if vals else np.nan))
+            nilai = float(np.mean(vals)) if vals else np.nan
+            resmi = (ref or {}).get((jenis, thn_, m), {}).get(kolom)
+            if resmi is not None and not pd.isna(resmi):
+                nilai = float(resmi)
+            keluar.append((thn_, m, nilai))
     return keluar
 
 
@@ -386,10 +447,10 @@ def kalimat_kelas(rows, jenis, ind, ke):
     return f"Sementara pada {semua} tidak terjadi perubahan."
 
 
-def kalimat_bln_ini(rows, jenis, ind, prov, bln, thn, prev_bln, prev_thn):
+def kalimat_bln_ini(rows, jenis, ind, prov, bln, thn, prev_bln, prev_thn, total=None):
     """'… pada Juli 2026 mencapai 21,55 persen atau turun sebesar 1,79 poin dibanding Juni 2026 yang sebesar 23,34 persen.'"""
     satuan = SATUAN[ind]
-    _, prev, cur, d_prev, _ = total_kelas(rows)
+    _, prev, cur, d_prev, _ = total if total is not None else total_kelas(rows)
     if not _ada(cur, prev):
         return (f"{SINGKATAN_PANJANG[ind]} {jenis} di {prov} pada periode {bln} {thn} "
                 "tidak tersedia.")
@@ -401,10 +462,10 @@ def kalimat_bln_ini(rows, jenis, ind, prov, bln, thn, prev_bln, prev_thn):
     )
 
 
-def kalimat_bln_lalu(rows, jenis, ind, bln, thn):
+def kalimat_bln_lalu(rows, jenis, ind, bln, thn, total=None):
     """'Jika dibandingkan bulan yang sama pada tahun sebelumnya yang selama 2,22 hari, maka RLMT Juli 2026 turun sebesar 0,59 poin menjadi 1,63 hari.'"""
     satuan = SATUAN[ind]
-    ly, _, cur, _, d_ly = total_kelas(rows)
+    ly, _, cur, _, d_ly = total if total is not None else total_kelas(rows)
     if not _ada(cur, ly):
         return (f"Jika dibandingkan dengan bulan yang sama pada tahun sebelumnya, "
                 f"{SINGKATAN[ind]} {jenis} pada {bln} {thn} tidak tersedia.")
@@ -591,7 +652,8 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
         root, blok = roots.get(sid), data.get((ind, jenis))
         if root is None or not blok:
             continue
-        kalimat = kalimat_bln_ini(blok["rows"], jenis, ind, prov, bln, thn, prev_bln, prev_thn)
+        kalimat = kalimat_bln_ini(blok["rows"], jenis, ind, prov, bln, thn, prev_bln, prev_thn,
+                                  total=total_blok(blok))
         if jangkar:
             _tulis_setelah_jangkar(_psr_akar(root, "Body Text BRS"), jangkar, kalimat,
                                    warnings, sid, tertulis=tertulis)
@@ -605,7 +667,7 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
         if root is None or not blok:
             continue
         _tulis(_psr_akar(root, "Body Text BRS"),
-               [kalimat_bln_lalu(blok["rows"], jenis, ind, bln, thn)], warnings, sid,
+               [kalimat_bln_lalu(blok["rows"], jenis, ind, bln, thn, total_blok(blok))], warnings, sid,
                tab=True, tertulis=tertulis)
 
     # 5) Ringkasan (2 segmen per paragraf)
@@ -626,7 +688,7 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
         _tulis_setelah_jangkar(
             _psr_akar(root), "TPK Hotel Bintang",
             kalimat_bln_ini(blok["rows"], "Hotel Bintang", "tpk", prov, bln, thn,
-                            prev_bln, prev_thn), warnings, GLOSARIUM_TPK, tertulis=tertulis)
+                            prev_bln, prev_thn, total=total_blok(blok)), warnings, GLOSARIUM_TPK, tertulis=tertulis)
 
     # 8) Cakupan slot — jangan diamkan. Setiap story yang memuat angka gaya BPS
     #    (dua desimal) WAJIB sudah tertulisi; kalau ada yang tidak, story itu
@@ -710,7 +772,7 @@ def _ringkasan(data, bln, thn):
         for jenis in JENIS:
             blok = data.get((ind, jenis))
             if blok:
-                _, _, cur, _, _ = total_kelas(blok["rows"])
+                _, _, cur, _, _ = total_blok(blok)
                 nilai.append((jenis.replace("Hotel ", ""), angka(cur)))
         satuan = SATUAN[ind]
         if not nilai:
@@ -734,8 +796,8 @@ def _ringkasan_utama(data, bln, thn, prev_bln, prev_thn):
         return ["", ""]
 
     def tpk_segmen():
-        _, pb, cb, db, dly_b = total_kelas(tpk[0]["rows"])
-        _, pn, cn, dn, dly_n = total_kelas(tpk[1]["rows"])
+        _, pb, cb, db, dly_b = total_blok(tpk[0])
+        _, pn, cn, dn, dly_n = total_blok(tpk[1])
         return (
             f"{SINGKATAN_PANJANG['tpk']} Hotel Bintang selama {bln} {thn} mencapai {angka(cb)} "
             f"persen atau {arah(db)} sebesar {angka(abs(db))} poin dibanding {prev_bln} "
@@ -748,8 +810,8 @@ def _ringkasan_utama(data, bln, thn, prev_bln, prev_thn):
         )
 
     def rlmt_segmen():
-        _, prb, crb, drb, _ = total_kelas(rlmt[0]["rows"])
-        _, prn, crn, drn, _ = total_kelas(rlmt[1]["rows"])
+        _, prb, crb, drb, _ = total_blok(rlmt[0])
+        _, prn, crn, drn, _ = total_blok(rlmt[1])
         return (
             f"{SINGKATAN_PANJANG['rlmtgab']} Hotel Bintang pada {bln} {thn} mencapai "
             f"{angka(crb)} hari atau {arah(drb)} sebesar {angka(abs(drb))} poin dibanding "

@@ -517,6 +517,46 @@ def test_paket_zip_berisi_idml_dan_semua_aset_template():
     assert not any(n.startswith("PNG/") for n in isi), "folder PNG/ lama masih ada"
 
 
+def test_total_resmi_menimpa_sel_yang_punya_rujukan():
+    """Baris Total harus angka resmi Prov_Jenis, bukan rataan kelas — sama seperti
+    halaman web. Sel tanpa rujukan tetap rataan kelas."""
+    from modules.indesign_pariwisata import _total_resmi
+
+    rows = {1: (30.0, 40.0, 50.0), 3: (10.0, 20.0, 30.0)}  # rataan: (20, 30, 40)
+    ref = {("Hotel Bintang", 2026, 8): {"tpk": 50.77, "rlmtgab": 1.62}}
+    total = _total_resmi(rows, ref, "Hotel Bintang", "tpk",
+                         ((2025, 8), (2026, 7), (2026, 8)))
+    assert total[2] == 50.77, f"bulan ini harus angka resmi, dapat {total[2]}"
+    assert total[1] == 30.0, f"bulan tanpa rujukan tetap rataan, dapat {total[1]}"
+
+
+def test_kumpulkan_kelas_pakai_angka_resmi_prov_jenis():
+    """Regresi: tabel .idml pernah memakai rataan kelas (bukan angka resmi) saat
+    halaman web sudah memakai angka resmi Prov_Jenis."""
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as c:
+        c.exec_driver_sql(
+            "CREATE TABLE all_data (kd_prov TEXT, jenis_akomodasi TEXT, "
+            "kelas_akomodasi INT, tpk REAL, rlmtgab REAL, year INT, month INT)")
+        c.exec_driver_sql("INSERT INTO all_data VALUES (?,?,?,?,?,?,?)",
+                          [("93", "Hotel Bintang", 1, 30.0, 1.0, 2026, 8),
+                           ("93", "Hotel Bintang", 3, 10.0, 1.0, 2026, 8)])
+        c.exec_driver_sql(
+            "CREATE TABLE pariwisata_ref_avg (kd_prov TEXT, jenis_akomodasi TEXT, "
+            "year INT, month INT, tpk REAL, rlmtgab REAL)")
+        c.exec_driver_sql("INSERT INTO pariwisata_ref_avg VALUES (?,?,?,?,?,?)",
+                          ("93", "Hotel Bintang", 2026, 8, 50.77, 1.62))
+
+    out = kumpulkan_kelas(engine, "93", 2026, "Agustus")
+    total = out[("tpk", "Hotel Bintang")]["total"]
+    assert total[2] == 50.77, f"bulan ini harus 50,77 (resmi), dapat {total[2]}"
+    tren = out[("tpk", "Hotel Bintang")]["tren"]
+    assert next(v for (yr, m, v) in tren if (yr, m) == (2026, 8)) == 50.77, \
+        "titik grafik Agustus 2026 harus angka resmi"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
