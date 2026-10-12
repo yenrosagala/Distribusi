@@ -630,37 +630,179 @@ def render_indesign_pariwisata(etl_engine, prov, thn, bln):
 # ============================================================
 # PAGE — ADMIN ETL UPLOADS
 # ============================================================
+def _pari_delete_filter(prov, year, month):
+    """(SQL WHERE fragment, params) for the pariwisata delete panel.
+
+    'SEMUA' on any axis drops that condition; all-'SEMUA' falls back to 1=1,
+    which the caller guards behind a warning + confirm checkbox.
+    """
+    conditions, params = [], {}
+    if prov != "SEMUA":
+        conditions.append("kd_prov = :prov")
+        params["prov"] = prov
+    if year != "SEMUA":
+        conditions.append("CAST(year AS TEXT) = :year")
+        params["year"] = str(year)
+    if month != "SEMUA":
+        conditions.append("month = :month")
+        params["month"] = int(month)
+    return (" AND ".join(conditions) if conditions else "1=1"), params
+
+
 def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="hero-title">Admin: Ingesti Data ETL</div>', unsafe_allow_html=True)
-    card_open("Panel Admin", "Ingesti data ETL")
-    st.markdown(
-        f"<p style='color:{INK_DIM};'>Unggah matriks Excel sumber langsung ke basis data "
-        "dan jalankan pemeliharaan sistem.</p>",
-        unsafe_allow_html=True,
-    )
-    st.divider()
-
-    uploaded_files = st.file_uploader("Unggah File Excel Sumber (.xlsx)", type=["xlsx"], accept_multiple_files=True)
-
-    # Default to the newest period already in the system rather than a fixed
-    # month, so a repeat ingest does not silently land in the wrong slot.
+    # Pariwisata lives in one table (all_data) with kd_prov / year / month as the
+    # natural key, so all three panels filter on those same three columns.
+    table = etl_engine.general_table_name
     default_year = int(year_list[-1]) if year_list else 2026
     default_month = int(month_list[-1]) if month_list else 1
-    adm_col1, adm_col2 = st.columns(2)
-    with adm_col1:
-        target_year = st.number_input("Tahun Target", value=default_year, min_value=2015, max_value=2100, step=1)
-    with adm_col2:
-        target_month = st.selectbox(
-            "Bulan Target", options=list(range(1, 13)), format_func=bulan, index=default_month - 1
-        )
 
-    if st.button("🚀 Proses & Masukkan Data", type="primary"):
-        if uploaded_files:
-            with st.spinner("Memproses file ke basis data…"):
-                for uploaded_file in uploaded_files:
-                    etl_engine.etl_pipeline(uploaded_file, year=int(target_year), month=int(target_month))
-            st.success(f"{len(uploaded_files)} file berhasil dimasukkan ke basis data.")
-            st.cache_data.clear()  # rows changed; every cached read is now stale
+    tab_upload, tab_correct, tab_delete = st.tabs(
+        ["📥 Ingesti Data (Upload)", "🛠️ Koreksi Manual", "⚠️ Hapus Data"]
+    )
+
+    # --- TAB 1: UPLOAD ---
+    with tab_upload:
+        card_open("Panel Admin", "Ingesti data ETL")
+        st.markdown(
+            f"<p style='color:{INK_DIM};'>Unggah matriks Excel sumber langsung ke basis data "
+            "dan jalankan pemeliharaan sistem.</p>",
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
+        uploaded_files = st.file_uploader("Unggah File Excel Sumber (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+
+        # Default to the newest period already in the system rather than a fixed
+        # month, so a repeat ingest does not silently land in the wrong slot.
+        adm_col1, adm_col2 = st.columns(2)
+        with adm_col1:
+            target_year = st.number_input("Tahun Target", value=default_year, min_value=2015, max_value=2100, step=1)
+        with adm_col2:
+            target_month = st.selectbox(
+                "Bulan Target", options=list(range(1, 13)), format_func=bulan, index=default_month - 1
+            )
+
+        if st.button("🚀 Proses & Masukkan Data", type="primary"):
+            if uploaded_files:
+                with st.spinner("Memproses file ke basis data…"):
+                    for uploaded_file in uploaded_files:
+                        etl_engine.etl_pipeline(uploaded_file, year=int(target_year), month=int(target_month))
+                st.success(f"{len(uploaded_files)} file berhasil dimasukkan ke basis data.")
+                st.cache_data.clear()  # rows changed; every cached read is now stale
+            else:
+                st.warning("Unggah setidaknya satu file Excel sebelum memproses.")
+        card_close()
+
+    # --- TAB 2: MANUAL CORRECTION ---
+    with tab_correct:
+        st.markdown("### Koreksi Data Tabel Langsung")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            prov_edit = st.selectbox("Provinsi", TARGET_PROVINCES, key="pari_edit_prov")
+        with c2:
+            year_edit = st.number_input(
+                "Tahun Periode", value=default_year, min_value=2015, max_value=2100, step=1, key="pari_edit_year"
+            )
+        with c3:
+            month_edit = st.selectbox(
+                "Bulan Periode", options=list(range(1, 13)), format_func=bulan,
+                index=default_month - 1, key="pari_edit_month",
+            )
+
+        if st.button("🔍 Muat Data untuk Diedit", key="pari_btn_load_edit", width="stretch"):
+            df_to_edit = pd.read_sql(
+                text(f"SELECT * FROM {table} WHERE kd_prov = :prov AND year = :year AND month = :month"),
+                etl_engine.engine,
+                params={"prov": prov_edit, "year": int(year_edit), "month": int(month_edit)},
+            )
+            if df_to_edit.empty:
+                st.warning("Data tidak ditemukan untuk periode tersebut.")
+            else:
+                st.session_state["pari_edit_df"] = df_to_edit
+
+        if "pari_edit_df" in st.session_state:
+            edited_df = st.data_editor(st.session_state["pari_edit_df"], width="stretch", num_rows="dynamic")
+            if st.button("💾 Simpan Perubahan Baris", type="primary", width="stretch", key="pari_btn_save_edit"):
+                try:
+                    with etl_engine.engine.begin() as conn:
+                        conn.execute(
+                            text(f"DELETE FROM {table} WHERE kd_prov = :prov AND year = :year AND month = :month"),
+                            {"prov": prov_edit, "year": int(year_edit), "month": int(month_edit)},
+                        )
+                        edited_df.to_sql(table, conn, if_exists="append", index=False)
+                    st.success("✅ Perubahan berhasil disimpan ke database!")
+                    st.cache_data.clear()  # rows changed; every cached read is now stale
+                    del st.session_state["pari_edit_df"]
+                except Exception as e:
+                    st.error(f"Gagal menyimpan data: {e}")
+
+    # --- TAB 3: DELETE ---
+    with tab_delete:
+        st.markdown("### Zona Penghapusan Data")
+        st.markdown(
+            "Hapus data berdasarkan kriteria filter tertentu untuk membersihkan"
+            " entri yang salah atau duplikat."
+        )
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            prov_del = st.selectbox("Provinsi", ["SEMUA"] + TARGET_PROVINCES, key="pari_del_prov")
+        with d2:
+            try:
+                years_df = pd.read_sql(text(f"SELECT DISTINCT year FROM {table}"), etl_engine.engine)
+                year_options = ["SEMUA"] + sorted(years_df["year"].astype(str).unique().tolist())
+            except Exception:
+                year_options = ["SEMUA"]
+            year_del = st.selectbox("Tahun", year_options, key="pari_del_year")
+        with d3:
+            month_del = st.selectbox(
+                "Bulan", ["SEMUA"] + list(range(1, 13)), key="pari_del_month",
+                format_func=lambda m: m if m == "SEMUA" else bulan(m),
+            )
+
+        where_clause, params_del = _pari_delete_filter(prov_del, year_del, month_del)
+        if not where_clause == "1=1":
+            pass
+        try:
+            count_result = pd.read_sql(
+                text(f"SELECT COUNT(*) as n FROM {table} WHERE {where_clause}"),
+                etl_engine.engine, params=params_del,
+            )
+            jumlah_del = int(count_result["n"].iloc[0])
+        except Exception as e:
+            st.error(f"Gagal membaca data: {e}")
+            jumlah_del = 0
+
+        if jumlah_del == 0:
+            st.info("Tidak ada data yang cocok dengan kriteria filter.")
         else:
-            st.warning("Unggah setidaknya satu file Excel sebelum memproses.")
-    card_close()
+            if where_clause == "1=1":
+                st.error(
+                    f"🚨 PERINGATAN: Tanpa filter aktif, **SEMUA {jumlah_del} baris**"
+                    f" pada `{table}` akan dihapus!"
+                )
+            else:
+                st.warning(
+                    f"⚠️ **{jumlah_del} baris data** pada `{table}` akan dihapus"
+                    " permanen berdasarkan filter."
+                )
+            confirm_del = st.checkbox(
+                "Saya paham tindakan ini permanen dan ingin melanjutkan.",
+                key="pari_confirm_delete",
+            )
+            if st.button(
+                "🗑️ Hapus Data Sesuai Filter",
+                disabled=not confirm_del,
+                key="pari_btn_delete",
+                type="primary",
+                width="stretch",
+            ):
+                try:
+                    with etl_engine.engine.begin() as conn:
+                        conn.execute(text(f"DELETE FROM {table} WHERE {where_clause}"), params_del)
+                    st.success(f"✅ Berhasil menghapus {jumlah_del} baris dari `{table}`.")
+                    st.cache_data.clear()  # rows removed; every cached read is now stale
+                    st.session_state.pop("pari_confirm_delete", None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal menghapus data: {e}")
