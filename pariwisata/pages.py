@@ -652,10 +652,15 @@ def _pari_delete_filter(prov, year, month):
 MONTH_MAP = {name: i for i, name in enumerate(MONTH_NAMES, start=1)}
 
 
-def _get_kabupaten_list():
+def _get_kabupaten_list(prov=None):
     try:
         engine = get_engine()
-        df = pd.read_sql(text(f"SELECT DISTINCT kd_kab FROM {ETL_ALL_DATA}"), engine)
+        query = f"SELECT DISTINCT kd_kab FROM {ETL_ALL_DATA}"
+        params = {}
+        if prov and prov != "SEMUA":
+            query += " WHERE kd_prov = :prov"
+            params["prov"] = prov
+        df = pd.read_sql(text(query), engine, params=params)
         kabs = df["kd_kab"].dropna().astype(str).unique().tolist()
         return sorted(kabs)
     except Exception:
@@ -663,6 +668,13 @@ def _get_kabupaten_list():
 
 
 ETL_ALL_DATA = "all_data"  # shared table
+
+
+@st.cache_data
+def _kabupaten_list_cached(prov=None):
+    """Distinct kabupaten, optionally for one province. Cached because the
+    kabupaten set changes rarely (ETL re-ingests are rare)."""
+    return _get_kabupaten_list(prov)
 
 
 PARI_VAR_OPTIONS = [
@@ -835,13 +847,16 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     # --- TAB 4: SERIES GRAPH (TREND ANALYSIS) ---
     with tab_series:
         st.markdown("### Data Series Graph (Analisis Tren)")
-        table_name = table
 
         s1, s2 = st.columns(2)
         with s1:
             prov_series = st.selectbox("Provinsi", ["SEMUA"] + TARGET_PROVINCES, key="pari_series_prov")
         with s2:
-            kab_options = ["SEMUA"] + _get_kabupaten_list()
+            kab_options = ["SEMUA"] + _kabupaten_list_cached(prov_series)
+            # Reset kabupaten when the province changes so a now-invalid choice
+            # from the previous province's list cannot stick.
+            if st.session_state.get("pari_series_kab") not in kab_options:
+                st.session_state["pari_series_kab"] = "SEMUA"
             kab_series = st.selectbox("Kabupaten/Kota", kab_options, key="pari_series_kab")
 
         var_series = st.multiselect(
