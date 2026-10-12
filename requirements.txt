@@ -4,9 +4,6 @@ pandas
 python-dotenv
 numpy
 plotly
-geopandas
-pyarrow
-shapely
 sqlalchemy
 
 google-genai
@@ -16,3 +13,6 @@ matplotlib
 python-docx>=1.1.0
 psycopg[binary]
 requests>=2.31
+
+python-pptx
+kaleido

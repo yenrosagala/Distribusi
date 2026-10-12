@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from modules.ai_backup import get_openrouter_key, openrouter_generate
 from modules.config import read_secret
+from modules.report_page import normalize_narrative, italicize_english
 
 logger = logging.getLogger(__name__)
 
@@ -280,10 +281,10 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                     narrative_params,
                 ).fetchone()
                 if row:
-                    cached_narrative = row[0]
+                    cached_narrative = normalize_narrative(row[0])
 
             if cached_narrative:
-                st.markdown(f'<div style="background: #f8fafc; padding: 16px; border-radius: 10px; border-left: 4px solid #f59e0b; margin-bottom: 16px;"><strong>🤖 AI Narrative (from database):</strong><br>{cached_narrative}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background: #f8fafc; padding: 16px; border-radius: 10px; border-left: 4px solid #f59e0b; margin-bottom: 16px;"><strong>🤖 AI Narrative (from database):</strong><br>{italicize_english(cached_narrative, html=True)}</div>', unsafe_allow_html=True)
                 if is_admin and st.button(f"🔄 Regenerate AI Narrative ({jenis} - {indicator.upper()})", key=regen_key):
                     _delete_narrative()
                     st.rerun()
@@ -291,7 +292,8 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                 if st.button(f"🤖 Generate AI Narrative ({jenis} - {indicator.upper()})", key=gen_key):
                     narrative_text = _generate_narrative()
                     if narrative_text:
-                        st.markdown(f'<div style="background: #f8fafc; padding: 16px; border-radius: 10px; border-left: 4px solid #f59e0b; margin-bottom: 16px;"><strong>🤖 AI Narrative (freshly generated):</strong><br>{narrative_text}</div>', unsafe_allow_html=True)
+                        narrative_text = normalize_narrative(narrative_text)
+                        st.markdown(f'<div style="background: #f8fafc; padding: 16px; border-radius: 10px; border-left: 4px solid #f59e0b; margin-bottom: 16px;"><strong>🤖 AI Narrative (freshly generated):</strong><br>{italicize_english(narrative_text, html=True)}</div>', unsafe_allow_html=True)
                 else:
                     st.info("Narasi AI belum dibuat untuk indikator ini.")
             else:

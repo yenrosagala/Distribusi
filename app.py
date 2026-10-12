@@ -1,9 +1,6 @@
 from pathlib import Path
-import geopandas as gpd
-import pandas as pd
 import streamlit as st
 
-from modules.admin_page import show_series_admin_page
 import modules.admin_page as transportasi_admin
 import modules.dashboard_page as transportasi_dashboard
 from modules.database import get_engine, init_db, init_narrative_table
@@ -50,15 +47,6 @@ def get_etl():
   return ETLEngine(engine)
 
 etl_engine = get_etl()
-
-@st.cache_data
-def load_geodata():
-  return gpd.read_parquet(BASE_DIR / "papua_provinces.parquet")
-
-try:
-  gdf_provinces = load_geodata()
-except Exception:
-  gdf_provinces = pd.DataFrame()
 
 # ============================================================
 # AUTH STATE  (from dash-pariwisata — now guards both domains)
@@ -269,20 +257,20 @@ if section == "pariwisata":
 
   with tabs[0]:
     pariwisata_pages.render_home_dashboard(
-        etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
+        etl_engine, df_info, prov_list, year_list, month_list
     )
   with tabs[1]:
     pariwisata_pages.render_infographic_map(
-        etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
+        etl_engine, df_info, prov_list, year_list, month_list
     )
   with tabs[2]:
     pariwisata_pages.render_report(
-        etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
+        etl_engine, df_info, prov_list, year_list, month_list
     )
   if st.session_state["role"] == "admin":
     with tabs[3]:
       pariwisata_pages.render_admin_etl(
-          etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces
+          etl_engine, df_info, prov_list, year_list, month_list
       )
 
 elif section == "transportasi":

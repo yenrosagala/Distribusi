@@ -1,12 +1,15 @@
 import logging
+import io
 import streamlit as st
+from pptx import Presentation
+from pptx.util import Inches, Pt
 import pandas as pd
 import plotly.graph_objects as go
 from sqlalchemy import text
 from google import genai
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
 from modules.ai_backup import openrouter_generate
-from modules.report_page import format_id_number, _arah_dinamis, get_gemini_api_keys
+from modules.report_page import format_id_number, _arah_dinamis, get_gemini_api_keys, normalize_narrative, italicize_english
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -28,11 +31,12 @@ PROVINSI_ORDER = ['Papua', 'Papua Selatan', 'Papua Tengah', 'Papua Pegunungan']
 # ==============================================================================
 # HELPERS DATA
 # ==============================================================================
-def get_available_periods(engine):
+@st.cache_data(ttl=300)
+def get_available_periods(_engine):
     periods = set()
     for table in ['transportasi_udara', 'transportasi_laut']:
         try:
-            df = pd.read_sql(text(f"SELECT DISTINCT tahun, bulan FROM {table}"), engine)
+            df = pd.read_sql(text(f"SELECT DISTINCT tahun, bulan FROM {table}"), _engine)
             for _, r in df.iterrows():
                 periods.add((int(r['tahun']), r['bulan']))
         except Exception:
@@ -47,9 +51,10 @@ def get_prev_period(thn, bln):
     return thn - 1, 'Desember'
 
 
-def load_period_data(engine, table, thn, bln):
+@st.cache_data(ttl=300)
+def load_period_data(_engine, table, thn, bln):
     query = f"SELECT * FROM {table} WHERE CAST(tahun AS TEXT) = :thn AND bulan = :bln"
-    return pd.read_sql(text(query), engine, params={"thn": str(thn), "bln": bln})
+    return pd.read_sql(text(query), _engine, params={"thn": str(thn), "bln": bln})
 
 
 def agg_by_provinsi(df, cols):
@@ -71,14 +76,15 @@ def pct_change(curr, prev):
     return (curr - prev) / prev * 100
 
 
-def load_cumulative_data(engine, table, thn, bln):
+@st.cache_data(ttl=300)
+def load_cumulative_data(_engine, table, thn, bln):
     bln_num = MONTH_MAP[bln]
     months = [INV_MONTH_MAP[i] for i in range(1, bln_num + 1)]
     params = {f"m{i}": m for i, m in enumerate(months)}
     placeholders = ", ".join(f":{k}" for k in params)
     query = f"SELECT * FROM {table} WHERE CAST(tahun AS TEXT) = :thn AND bulan IN ({placeholders})"
     params["thn"] = str(thn)
-    return pd.read_sql(text(query), engine, params=params)
+    return pd.read_sql(text(query), _engine, params=params)
 
 
 def build_stacked_bar(df_curr, col_bottom, col_top, label_bottom, label_top,
@@ -154,13 +160,6 @@ def compute_indicator_stats(df_curr, df_prev, df_cum_curr, df_cum_prev, cols):
     }
 
 
-def _top_bottom(series):
-    valid = series.dropna()
-    if valid.empty:
-        return None, None
-    return {'nama': valid.idxmax(), 'pct': valid.max()}, {'nama': valid.idxmin(), 'pct': valid.min()}
-
-
 def generate_section_narrative_ai(moda_nama, bln, thn, prev_bln, prev_thn,
                                    penumpang_stats, barang_stats, satuan_barang):
     api_keys = get_gemini_api_keys()
@@ -177,11 +176,6 @@ def generate_section_narrative_ai(moda_nama, bln, thn, prev_bln, prev_thn,
         st.session_state["gemini_key_index"] = 0
 
     num_keys = len(api_keys)
-    
-    p_top, p_bot = _top_bottom(penumpang_stats['mtm_per_prov'])
-    b_top, b_bot = _top_bottom(barang_stats['mtm_per_prov'])
-    p_top_yoy, p_bot_yoy = _top_bottom(penumpang_stats['yoy_per_prov'])
-    b_top_yoy, b_bot_yoy = _top_bottom(barang_stats['yoy_per_prov'])
 
     prompt = (
         "Anda adalah Analis Kebijakan Utama dan Ahli Statistik Senior pada Direktorat Statistik Transportasi Badan Pusat Statistik (BPS).\n"
@@ -303,9 +297,15 @@ def render_section_narrative(moda_nama, table, engine, cols_penumpang, cols_bara
                 delete_db_narrative(report_type, period_key)
                 st.rerun()
 
-    st.markdown(para1)
+    para1 = normalize_narrative(para1)
     if para2:
-        st.markdown(para2)
+        para2 = normalize_narrative(para2)
+
+    st.markdown(italicize_english(para1))
+    if para2:
+        st.markdown(italicize_english(para2))
+
+    return para1, para2
 
 
 # ==============================================================================
@@ -323,7 +323,7 @@ def show_section(engine, table, moda_title, icon, header_color,
 
     if df_curr_raw.empty:
         st.warning(f"⚠️ Belum ada data Transportasi {moda_title} untuk periode {bln} {thn}.")
-        return
+        return None
 
     all_cols = cols_penumpang + cols_barang
     df_curr = agg_by_provinsi(df_curr_raw, all_cols)
@@ -357,9 +357,100 @@ def show_section(engine, table, moda_title, icon, header_color,
         st.dataframe(style_growth_table(tbl2, "#FECACA"), width='stretch')
 
     satuan_barang = "ton" if moda_title == "Laut" else "kg"
-    render_section_narrative(
+    para1, para2 = render_section_narrative(
         moda_title, table, engine, cols_penumpang, cols_barang, satuan_barang,
         df_curr, df_prev, thn, bln, prev_thn, prev_bln
+    )
+    return {
+        "moda": moda_title, "bln": bln, "thn": thn,
+        "figs": [fig1, fig2], "tables": [tbl1, tbl2],
+        "narration": (para1, para2),
+    }
+
+
+def _slide_title(slide, text):
+    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.2), Inches(12.5), Inches(0.7))
+    tf = tb.text_frame
+    tf.text = text
+    run = tf.paragraphs[0].runs[0]
+    run.font.size = Pt(24)
+    run.font.bold = True
+
+
+def _add_pptx_table(slide, df, left, top, width, height):
+    """Tabel dengan format sel sama persis dengan gaya web growth table."""
+    def fmt(v):
+        return "" if pd.isna(v) else f"{v:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
+
+    rows, cols = df.shape
+    gf = slide.shapes.add_table(rows + 1, cols + 1, left, top, width, height)
+    tbl = gf.table
+    for j, h in enumerate(["PROVINSI"] + list(df.columns)):
+        tbl.cell(0, j).text = str(h)
+    for i, (idx, row) in enumerate(df.iterrows(), start=1):
+        tbl.cell(i, 0).text = str(idx)
+        for j, v in enumerate(row, start=1):
+            tbl.cell(i, j).text = fmt(v)
+    for r_i, row in enumerate(tbl.rows):
+        row.height = Inches(0.3)
+        for cell in row.cells:
+            for p in cell.text_frame.paragraphs:
+                for run in p.runs:
+                    run.font.size = Pt(9)
+                    if r_i == 0:
+                        run.font.bold = True
+
+
+def _add_pptx_narration(slide, para1, para2, left, top, width, height):
+    tb = slide.shapes.add_textbox(left, top, width, height)
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.text = para1
+    for p in tf.paragraphs:
+        for run in p.runs:
+            run.font.size = Pt(11)
+    if para2:
+        p2 = tf.add_paragraph()
+        p2.text = para2
+        for run in p2.runs:
+            run.font.size = Pt(11)
+
+
+def _build_pptx(sections):
+    """1 deck: tiap moda 2 slide — (1) grafik PNG, (2) tabel pertumbuhan + narasi."""
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    for sec in sections:
+        moda, bln, thn = sec["moda"], sec["bln"], sec["thn"]
+
+        s1 = prs.slides.add_slide(prs.slide_layouts[6])
+        _slide_title(s1, f"Transportasi {moda} — {bln} {thn}: Grafik")
+        x = Inches(0.4)
+        for fig in sec["figs"]:
+            img = fig.to_image(format="png", width=1100, height=400)
+            s1.shapes.add_picture(io.BytesIO(img), x, Inches(1.1), width=Inches(6.15))
+            x += Inches(6.15) + Inches(0.25)
+
+        s2 = prs.slides.add_slide(prs.slide_layouts[6])
+        _slide_title(s2, f"Transportasi {moda} — {bln} {thn}: Tabel & Narasi")
+        _add_pptx_table(s2, sec["tables"][0], Inches(0.4), Inches(1.1), Inches(6.15), Inches(2.2))
+        _add_pptx_table(s2, sec["tables"][1], Inches(6.8), Inches(1.1), Inches(6.15), Inches(2.2))
+        para1, para2 = sec["narration"]
+        _add_pptx_narration(s2, para1, para2, Inches(0.4), Inches(3.6), Inches(12.5), Inches(3.6))
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def _download_pptx(sections):
+    bln, thn = sections[0]["bln"], sections[0]["thn"]
+    st.download_button(
+        "⬇️ Unduh Deck PowerPoint (chart, tabel & narasi seluruh moda)",
+        data=_build_pptx(sections),
+        file_name=f"dashboard_transportasi_{thn}_{bln}.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        key="dl_pptx_all",
     )
 
 
@@ -392,7 +483,7 @@ def show_dashboard_page():
 
     st.markdown("---")
 
-    show_section(
+    laut = show_section(
         engine, 'transportasi_laut', "Laut", "🚢", "#FDE68A",
         cols_penumpang=['dn_penumpang_naik', 'dn_penumpang_turun'],
         labels_penumpang=['PENUMPANG BERANGKAT', 'PENUMPANG DATANG'],
@@ -405,7 +496,7 @@ def show_dashboard_page():
 
     st.markdown("---")
 
-    show_section(
+    udara = show_section(
         engine, 'transportasi_udara', "Udara", "✈️", "#FDE68A",
         cols_penumpang=['penumpang_berangkat', 'penumpang_datang'],
         labels_penumpang=['PENUMPANG BERANGKAT', 'PENUMPANG DATANG'],
@@ -417,6 +508,10 @@ def show_dashboard_page():
     )
 
     st.markdown("---")
+
+    sections = [s for s in (laut, udara) if s]
+    if sections:
+        _download_pptx(sections)
 
     with st.expander("📋 Lihat Data Detail Mentah", expanded=False):
         moda_detail = st.radio(

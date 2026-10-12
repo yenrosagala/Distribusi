@@ -184,7 +184,7 @@ def _normalize_csr(psr):
 
 def _segments(psr):
     """Kembalikan daftar segmen; tiap segmen = list CSR berisi Content berurutan (dipisah Br)."""
-    csrs = _normalize_csr(psr)
+    _normalize_csr(psr)
     segs, cur = [], []
     for csr in psr.findall("CharacterStyleRange"):
         kid = [k for k in csr if k.tag in ("Content", "Br")]
@@ -317,7 +317,7 @@ def _display_label(label, moda, is_kab, n):
 
 def fill_table(story_root, story_id, item, own_protos, fallback_protos, cols_txt, title, warnings):
     """Isi satu tabel. Mengembalikan selisih jumlah baris terhadap template."""
-    moda, _, _, satuan, dec = TABLE_STORIES[story_id]
+    moda, _, _, _, dec = TABLE_STORIES[story_id]
     story = story_root.find("Story")
     tbl = story.find(".//Table")
     tbl_self = tbl.get("Self")
@@ -687,9 +687,6 @@ def fill_brs_template(template_bytes, prov, thn, bln, items, kab_lookup,
     global_map.update({tok: prov for tok in TPL_PROV_TOKENS})
 
     # story
-    def load(sid):
-        return _parse(files[f"Stories/Story_{sid}.xml"])
-
     roots = {}
     for n in list(files):
         if n.startswith("Stories/Story_"):

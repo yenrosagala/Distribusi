@@ -30,6 +30,7 @@ from modules.report_page import (  # noqa: E402
     NARRATIVE_META,
     format_id_number,
     normalize_narrative,
+    italicize_english,
     table_formatters,
 )
 
@@ -192,6 +193,39 @@ def test_existing_persen_not_duplicated():
     assert "persen persen" not in out, out
     assert "3,45 persen" in out, out
     assert "1.000 orang" in out, out
+
+
+def test_no_percent_sign_survives():
+    """Jaring pengaman: "%" apa pun (termasuk token yang gagal parse) jadi 'persen'."""
+    for txt in [
+        "mencapai 5% dari total.",
+        "naik 5 % (angka dipisah spasi).",
+        "margin tak valid 12,3.4% tetap aman.",
+        "kombinasi 10% lalu 20 persen." ,
+    ]:
+        out = normalize_narrative(txt)
+        assert "%" not in out, f"{txt!r} -> {out!r}"
+        assert "persen" in out, out
+
+
+def test_italicize_english_terms():
+    out = italicize_english("tumbuh Month-to-Month (M-to-M) dan Year-on-Year (Y-on-Y), kumulatif Year-to-Date.")
+    assert "*Month-to-Month*" in out, out
+    assert "*M-to-M*" in out, out
+    assert "*Year-on-Year*" in out, out
+    assert "*Year-to-Date*" in out, out
+
+def test_italicize_english_html_and_plain():
+    assert italicize_english("YoY naik") == "*YoY* naik", italicize_english("YoY naik")
+    assert italicize_english("YoY naik", html=True) == "<em>YoY</em> naik", italicize_english("YoY naik", html=True)
+    assert italicize_english("") == ""
+    assert italicize_english(None) is None
+
+def test_italicize_keeps_already_italic_prefix_intact():
+    """Prefix '*(Executive Summary - [source])*' tidak boleh jadi asterisk ganda."""
+    out = italicize_english("*(Executive Summary - Gemini AI)*\n\nY-on-Y menurun.")
+    assert "*(Executive Summary - Gemini AI)*" in out, out
+    assert "*Y-on-Y*" in out, out
 
 
 def test_satuan_lookup_covers_all_targets():

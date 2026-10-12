@@ -38,12 +38,21 @@ class Stub:
     def plotly_chart(self, fig, **kwargs):
         CAPTURED.append((fig, kwargs))
 
+    def cache_data(self, *a, **k):
+        # Supports both @st.cache_data and @st.cache_data(ttl=300).
+        if len(a) == 1 and not k and callable(a[0]):
+            return a[0]
+        return lambda fn: fn
+
+    cache_resource = cache_data
+
     def __getattr__(self, name):
         return lambda *a, **k: None
 
 
 sys.modules["streamlit"] = Stub()
 pages = importlib.import_module("pariwisata.pages")
+importlib.reload(pages)  # a prior test may have imported it against a different stub
 
 
 def _trend():

@@ -1,4 +1,6 @@
+import json
 import logging
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -36,6 +38,48 @@ CUR_LABEL, PREV_LABEL = "#92400E", "#166534"
 TARGET_PROVINCES = ["Papua", "Papua Tengah", "Papua Pegunungan", "Papua Selatan"]
 LEFT_PROVINCES = ["Papua Tengah", "Papua Selatan"]
 RIGHT_PROVINCES = ["Papua", "Papua Pegunungan"]
+
+
+def _ring_centroid_lonlat(ring):
+    """Average of the outer ring's vertices. Good enough as a label anchor."""
+    xs = [p[0] for p in ring]
+    ys = [p[1] for p in ring]
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+
+def _feature_centroid_lonlat(geom):
+    """GeoJSON Polygon/MultiPolygon -> (lon, lat) of the largest polygon's outer ring."""
+    rings = (
+        geom["coordinates"]
+        if geom["type"] == "Polygon"
+        else [r for poly in geom["coordinates"] for r in poly]
+    )
+    outer = max(
+        rings, key=lambda r: abs(
+            sum(r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1] for i in range(len(r) - 1))
+        )
+    )
+    return _ring_centroid_lonlat(outer)
+
+
+@st.cache_data
+def load_geodata():
+    """Province map geometry without geopandas: plain GeoJSON + vertex centroids.
+
+    Replaces a 70KB parquet read that pulled in geopandas/shapely/pyarrow into
+    an already-heavy cold start. The geometry was stored as WGS84 lon/lat, so a
+    vertex average is a fine centroid for scatter labels over the projected
+    round-trip the old code did purely for sub-pixel label precision.
+    """
+    geo_path = Path(__file__).parent.parent / "papua_provinces.json"
+    with open(geo_path, encoding="utf-8") as f:
+        fc = json.load(f)
+    geo = {}
+    for feat in fc["features"]:
+        name = feat["properties"]["PROVINSI"]
+        lon, lat = _feature_centroid_lonlat(feat["geometry"])
+        geo[name] = {"geometry": feat["geometry"], "lon": lon, "lat": lat}
+    return geo
 
 JENIS_LABELS = {"Hotel Bintang": "Klasifikasi Bintang", "Hotel Non Bintang": "Klasifikasi NonBintang"}
 INDICATOR_META = {
@@ -169,25 +213,45 @@ def get_filter_options(_etl_engine):
             return pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
+def _latest_metrics(_etl_engine, year, month):
+    with _etl_engine.engine.connect() as conn:
+        return pd.read_sql_query(
+            text(
+                f"SELECT AVG(tpk) as tpk, AVG(rlmtgab) as rlmtgab FROM {_etl_engine.general_table_name} "
+                "WHERE year = :year AND month = :month"
+            ),
+            conn,
+            params={"year": year, "month": month},
+        )
+
+
+@st.cache_data(ttl=300)
+def _infographic_data(_etl_engine, indicator, year, month, prev_year, prev_month):
+    with _etl_engine.engine.connect() as conn:
+        return pd.read_sql_query(
+            text(f"""
+                SELECT kd_prov AS province, jenis_akomodasi, month, year, AVG({indicator}) as val
+                FROM {_etl_engine.general_table_name}
+                WHERE year IN (:year, :prev_year) AND month IN (:month, :prev_month)
+                GROUP BY kd_prov, jenis_akomodasi, month, year
+            """),
+            conn,
+            params={"year": year, "prev_year": prev_year, "month": month, "prev_month": prev_month},
+        )
+
+
 # ============================================================
 # PAGE — HOME DASHBOARD
 # ============================================================
-def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
+def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="hero-title">👋 Selamat datang, ' + st.session_state["name"] + '</div>', unsafe_allow_html=True)
 
     if not df_info.empty:
         periods = sorted(periods_in(df_info))
         first_period, last_period = periods[0], periods[-1]
         latest_year, latest_month = last_period
-        with etl_engine.engine.connect() as conn:
-            df_latest = pd.read_sql_query(
-                text(
-                    f"SELECT AVG(tpk) as tpk, AVG(rlmtgab) as rlmtgab FROM {etl_engine.general_table_name} "
-                    "WHERE year = :year AND month = :month"
-                ),
-                conn,
-                params={"year": latest_year, "month": latest_month},
-            )
+        df_latest = _latest_metrics(etl_engine, latest_year, latest_month)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Provinsi Tercakup", len(prov_list))
         m2.metric("Periode Terakhir", period_label(latest_year, latest_month))
@@ -216,7 +280,7 @@ def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list,
 # ============================================================
 # PAGE — INFOGRAPHIC STAT MAP
 # ============================================================
-def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
+def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="filter-pill">', unsafe_allow_html=True)
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
@@ -241,17 +305,9 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
         prev_month = (map_month - 1) if map_month > 1 else 12
         prev_year = map_year if map_month > 1 else (map_year - 1)
 
-        query = text(f"""
-            SELECT kd_prov AS province, jenis_akomodasi, month, year, AVG({map_indicator}) as val
-            FROM {etl_engine.general_table_name}
-            WHERE year IN (:year, :prev_year) AND month IN (:month, :prev_month)
-            GROUP BY kd_prov, jenis_akomodasi, month, year
-        """)
-        with etl_engine.engine.connect() as conn:
-            df_infographic = pd.read_sql_query(
-                query, conn,
-                params={"year": map_year, "prev_year": prev_year, "month": map_month, "prev_month": prev_month},
-            )
+        df_infographic = _infographic_data(
+            etl_engine, map_indicator, map_year, map_month, prev_year, prev_month
+        )
 
         if df_infographic.empty:
             with st.container(border=True):
@@ -276,20 +332,29 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
                     render_province_card(prov, df_cur, df_prev)
 
             with col_map:
-                if not gdf_provinces.empty:
-                    merged_gdf = gdf_provinces.merge(
-                        df_cur.groupby("province")["val"].mean().reset_index(),
-                        left_on="PROVINSI", right_on="province", how="inner",
-                    )
-                    merged_gdf = merged_gdf[merged_gdf["PROVINSI"].isin(TARGET_PROVINCES)]
+                geo = load_geodata() or {}
+                vals = df_cur.groupby("province")["val"].mean()
 
-                    gdf_projected = merged_gdf.to_crs(epsg=32753)
-                    wgs84_centroids = gdf_projected.geometry.centroid.to_crs(epsg=4326)
-                    merged_gdf["lat"] = wgs84_centroids.y
-                    merged_gdf["lon"] = wgs84_centroids.x
+                features, rows = [], []
+                for prov in TARGET_PROVINCES:
+                    g = geo.get(prov)
+                    if g is None or prov not in vals.index:
+                        continue
+                    rows.append({
+                        "PROVINSI": prov, "val": vals[prov],
+                        "lat": g["lat"], "lon": g["lon"],
+                    })
+                    features.append({
+                        "type": "Feature", "id": prov,
+                        "properties": {"name": prov}, "geometry": g["geometry"],
+                    })
+                merged_gdf = pd.DataFrame(rows)
 
+                if not merged_gdf.empty:
                     fig_map = px.choropleth(
-                        merged_gdf, geojson=merged_gdf.geometry, locations=merged_gdf.index, color="val",
+                        merged_gdf,
+                        geojson={"type": "FeatureCollection", "features": features},
+                        locations="PROVINSI", featureidkey="properties.name", color="val",
                         color_continuous_scale=[[0, "#3A2A0E"], [0.5, PRIMARY], [1, "#FDE68A"]],
                         hover_name="PROVINSI", hover_data={"val": ":.2f"},
                     )
@@ -308,7 +373,7 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
                         st.plotly_chart(fig_map, width='stretch')
                 else:
                     with st.container(border=True):
-                        st.warning("Map geometry file (papua_provinces.parquet) could not be loaded.")
+                        st.warning("Map geometry file (papua_provinces.json) could not be loaded.")
 
                 csv_data = df_cur.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -415,7 +480,7 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
 ## ============================================================
 # PAGE — REPORT
 # ============================================================
-def render_report(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
+def render_report(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="hero-title">Laporan &amp; Narasi AI</div>', unsafe_allow_html=True)
     with st.container(border=True):
         r_col1, r_col2, r_col3 = st.columns(3)
@@ -565,7 +630,7 @@ def render_indesign_pariwisata(etl_engine, prov, thn, bln):
 # ============================================================
 # PAGE — ADMIN ETL UPLOADS
 # ============================================================
-def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list, gdf_provinces):
+def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="hero-title">Admin: Ingesti Data ETL</div>', unsafe_allow_html=True)
     card_open("Panel Admin", "Ingesti data ETL")
     st.markdown(
@@ -595,7 +660,7 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list, gdf_
                 for uploaded_file in uploaded_files:
                     etl_engine.etl_pipeline(uploaded_file, year=int(target_year), month=int(target_month))
             st.success(f"{len(uploaded_files)} file berhasil dimasukkan ke basis data.")
-            get_filter_options.clear()
+            st.cache_data.clear()  # rows changed; every cached read is now stale
         else:
             st.warning("Unggah setidaknya satu file Excel sebelum memproses.")
     card_close()

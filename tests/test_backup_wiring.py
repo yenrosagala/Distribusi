@@ -7,7 +7,6 @@ while the provider still passes its own tests.
 Run directly:  python tests/test_backup_wiring.py
 """
 import importlib
-import inspect
 import os
 import sys
 import types

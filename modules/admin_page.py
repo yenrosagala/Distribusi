@@ -551,6 +551,7 @@ def show_series_admin_page():
 
             if success_count > 0:
               st.balloons()
+              st.cache_data.clear()  # rows changed; every cached read is now stale
               for k in ["upload_file_names", "upload_meta", "upload_preview"]:
                 st.session_state.pop(k, None)
     else:
@@ -636,6 +637,7 @@ def show_series_admin_page():
             )
             edited_df.to_sql(table_edit, conn, if_exists="append", index=False)
           st.success("✅ Perubahan berhasil disimpan ke database!")
+          st.cache_data.clear()  # rows changed; every cached read is now stale
           del st.session_state["df_to_edit"]
         except Exception as e:
           st.error(f"Gagal menyimpan data: {e}")
@@ -748,6 +750,7 @@ def show_series_admin_page():
               f"✅ Berhasil menghapus {jumlah_baris_del} baris dari"
               f" `{table_del}`."
           )
+          st.cache_data.clear()  # rows removed; every cached read is now stale
           st.session_state.pop("confirm_delete_filtered", None)
           st.rerun()
         except Exception as e:

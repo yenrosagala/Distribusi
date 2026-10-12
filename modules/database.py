@@ -4,7 +4,6 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.exc import NoSuchTableError
-import pandas as pd
 import streamlit as st
 
 from modules.config import load_project_env, read_secret
@@ -19,7 +18,14 @@ load_project_env()
 DEFAULT_LOCAL_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "app_data.db"
 
 
+@st.cache_resource
 def get_engine():
+    """One Engine for the whole process, reused across sessions and reruns.
+
+    Was called raw from ~16 sites, each running create_engine() and opening a
+    fresh pool, so every widget interaction re-dialed the remote Supabase over
+    a new TLS handshake. cache_resource keeps one shared instance instead.
+    """
     # Ambil connection string dari st.secrets, environment variable, atau fallback lokal
     db_url = read_secret("DATABASE_URL") or os.getenv("DATABASE_URL")
 
@@ -217,6 +223,7 @@ def delete_db():
         with engine.begin() as conn:
             for t in tables:
                 conn.execute(text(f"DROP TABLE IF EXISTS {t}{suffix};"))
+        st.cache_data.clear()  # dropped rows; every cached read is now stale
         return True
     except Exception as e:
         st.error(f"Failed to delete database tables: {e}")

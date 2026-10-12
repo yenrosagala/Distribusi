@@ -21,8 +21,8 @@ one database, one engine, one connection config.
 .
 ├── app.py                     # Unified shell: page config, login, nav, routing
 ├── style.css                  # Theme (from dash-pariwisata, unchanged)
-├── logo.png                   # Unused brand asset carried over (unused in original too)
-├── papua_provinces.parquet    # Map geometry for Infographic Stat Map
+├── logo.png                   # Brand mark, loaded via raw.githubusercontent URL in app.py
+├── papua_provinces.json        # Map geometry for Infographic Stat Map (plain GeoJSON)
 ├── requirements.txt
 ├── .env.example               # Copy to .env and fill in ADMIN_PASSWORD
 ├── .gitignore                 # Excludes .env, .streamlit/secrets.toml, __pycache__
@@ -30,7 +30,8 @@ one database, one engine, one connection config.
 ├── data/
 │   └── app_data.db            # Local SQLite fallback DB (seeded from both repos' original data)
 ├── templates/
-│   └── BRS_Transportasi_Template Folder/   # InDesign BRS package (.idml/.indd/.pdf + fonts/links)
+│   ├── BRS PARIWISATA PAPUA Template.idml           # Tourism BRS template
+│   └── BRS_Transportasi_Template Folder/            # InDesign BRS package (.idml/.indd/.pdf + fonts/links)
 ├── pariwisata/                # From dash-pariwisata, adapted to the shared DB
 │   ├── etl_engine.py          # ETLEngine — same transform logic, now runs on the shared SQLAlchemy engine
 │   ├── ai.py                  # Gemini narrative generation for the Report page
@@ -39,16 +40,18 @@ one database, one engine, one connection config.
 │   ├── database.py            # get_engine()/init_db() — local SQLite fallback (see below)
 │   ├── config.py              # Papua wilayah/kabupaten mapping + env/secret loading
 │   ├── etl_engine.py          # BPS Excel parser for transport data
-│   ├── dashboard_page.py      # show_dashboard_page()
+│   ├── dashboard_page.py      # show_dashboard_page() + PowerPoint deck export
 │   ├── report_page.py         # show_report_page() + Word/BRS export UI
 │   ├── admin_page.py          # show_series_admin_page()
-│   └── indesign_export.py     # Fills the BRS .idml — no streamlit import, unit-testable
-└── tests/                     # pytest suite (10 files, 57 tests)
+│   ├── ai_backup.py           # OpenRouter fallback once the Gemini keys are exhausted
+│   ├── indesign_export.py     # Fills the transport BRS .idml — no streamlit import, unit-testable
+│   └── indesign_pariwisata.py # Fills the tourism BRS .idml
+└── tests/                     # pytest suite (20 files)
 ```
 
 `StaTransportasi`'s original `app.py` was dead code (leftover Dash
 boilerplate that didn't import any of its own modules), and `maps.py` in
-`dash-pariwisata` is an offline one-time script that generated the `.parquet`
+`dash-pariwisata` is an offline one-time script that generated the map geometry
 file — neither is part of the running app, so neither was carried over.
 
 ## Running locally
@@ -119,11 +122,12 @@ tables (`wilayah`, `transportasi_laut`, `transportasi_udara`,
 - `requirements.txt` drops a few unused/incorrect entries from
   dash-pariwisata's original file (`Dash` — never imported at runtime,
   `gunicorn` — not used by Streamlit, `datetime` — a stdlib module, not a
-  pip package).
+  pip package). It adds `python-pptx` and `kaleido` for the dashboard's
+  PowerPoint deck export.
 
 ## Verification status
 
-- `python -m pytest tests -q` → **57 passed**.
+- `python -m pytest tests -q` → **142 passed**.
 - `python -m compileall -q modules app.py` → clean.
 - Streamlit health endpoint returns `200 ok`; a live Gemini narrative request
   returns HTTP 200.
@@ -144,16 +148,26 @@ python -m pytest tests -q
 
 | File | Covers |
 | --- | --- |
-| `test_template_guard.py` | template/story-ID validation, province replacement, orphan-narrative cleanup |
+| `test_admin_auth.py` | admin fails closed when `ADMIN_PASSWORD` is unset |
+| `test_ai_backup.py` | OpenRouter only engages after the Gemini keys are exhausted |
+| `test_all_categories.py` | tables show every category; `0/0` renders as `"undefined"` |
+| `test_all_kelas.py` | accommodation tables show all classes, including empty ones |
+| `test_backup_wiring.py` | the three live call sites really invoke the OpenRouter backup |
+| `test_dashboard_pptx.py` | the dashboard builds a valid PowerPoint deck from its figures/tables/narration |
+| `test_dashboard_table_header.py` | dashboard row/column headers stay dark on the light header |
 | `test_idml_qr.py` | QR embedding + relative link rewrite in the `.idml` package |
+| `test_indesign_pariwisata.py` | the tourism `.idml` builder (kelas/tren/chart links) |
 | `test_infografis_upload.py` | infographic embedding + relative link rewrite |
+| `test_infographic_map.py` | the infographic map loads its geometry without geopandas |
+| `test_location_years_narrative.py` | location/year selection feeds the narrative |
+| `test_meta_filter_sync.py` | sidebar filter state syncs with page filters |
+| `test_narrative_db_only.py` | narratives are read from the DB; only admins may write |
 | `test_narrative_format.py` | 0 decimals for passengers, 2 for cargo/percent, `%` → `persen` |
 | `test_prev_period.py` | comparison period comes from the DB, not a guess |
-| `test_zero_prev_period.py` | previous-period totals when there is no prior data |
 | `test_report_totals.py` | report totals match the underlying rows |
-| `test_meta_filter_sync.py` | sidebar filter state syncs with page filters |
-| `test_location_years_narrative.py` | location/year selection feeds the narrative |
-| `test_admin_auth.py` | admin fails closed when `ADMIN_PASSWORD` is unset |
+| `test_template_guard.py` | template/story-ID validation, province replacement, orphan cleanup |
+| `test_yoy_chart.py` | the YoY line chart labels the compared months and stays readable |
+| `test_zero_prev_period.py` | percentage math doesn't crash when the comparison value is 0 |
 
 Story and spread IDs are read from the template at test time rather than
 hardcoded, so the suite survives the next InDesign re-export.

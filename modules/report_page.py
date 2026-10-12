@@ -5,7 +5,6 @@ import random
 import io
 import docx
 import re
-import time
 import logging
 from google import genai
 from sqlalchemy import text
@@ -17,7 +16,6 @@ from modules.indesign_export import (
     paket_zip,
     DEFAULT_TEMPLATE as DEFAULT_IDML_TEMPLATE,
 )
-from pathlib import Path
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -196,6 +194,7 @@ def build_brs_display_table(report_flat, prov, moda):
     
     return res[[col_prev, col_curr, 'M-to-M (%)', col_cum_prev, col_cum_curr, 'Y-on-Y (%)']]
 
+@st.cache_data(ttl=300)
 def get_comparison_data(prov, thn, bln, moda):
     table = "transportasi_udara" if moda == "Transportasi Udara" else "transportasi_laut"
     bln_num = MONTH_MAP[bln]
@@ -381,9 +380,27 @@ def normalize_narrative(text, col_target=None):
         return f"{format_id_number(val, dec)} {label}"
 
     out = _NUM_UNIT.sub(repl, text)
-    return _NUM_LOOSE.sub(
+    out = _NUM_LOOSE.sub(
         lambda m: format_id_number(_to_float_id(m.group(1)), default_dec), out
     )
+    # Jaring pengaman: "%" yang lolos regex angka (token gagal parse dsb.) tetap
+    # harus jadi kata "persen", apa pun sumber narasinya.
+    return re.sub(r"\s*%", " persen", out)
+
+# Istilah statistika Inggris pada narasi dibuat miring (web Markdown).
+# Export Word/.idml tetap memakai teks polos supaya tidak ada asterisk literal.
+# ponytail: deteksi berbasis whitelist istilah yang dipakai prompt/cache; naik ke
+# detector kamus kalau model mulai menulis kata Inggris bebas.
+_IT_TERMS = re.compile(
+    r"\b(?:Year-to-Date|Year-on-Year|Month-to-Month|M-to-M|Y-on-Y|YTD|YoY|MoM)\b",
+    re.IGNORECASE,
+)
+
+def italicize_english(text, html=False):
+    if not text:
+        return text
+    tag = ("<em>", "</em>") if html else ("*", "*")
+    return _IT_TERMS.sub(lambda m: f"{tag[0]}{m.group(0)}{tag[1]}", text)
 
 def _arah_dinamis(pct):
     # ponytail: the direction of a number is a fact, not a style choice. This used
@@ -792,13 +809,13 @@ def render_tables_and_narratives(all_collected_data):
                 p1_text = f"*(Executive Summary - Sistem Fallback)*\n\n{p1}"
                 p2_text = p2
 
-            if p1_text: st.markdown(p1_text)
-            if p2_text: st.markdown(p2_text)
-            
             # satu titik untuk web + Word + .idml: narasi tidak boleh punya
-            # format angka sendiri yang beda dari tabel.
+            # format angka sendiri yang beda dari tabel (termasuk "%" -> "persen").
             item['p1'] = normalize_narrative(p1_text, item['col_target'])
             item['p2'] = normalize_narrative(p2_text, item['col_target'])
+
+            if item['p1']: st.markdown(italicize_english(item['p1']))
+            if item['p2']: st.markdown(italicize_english(item['p2']))
 
 # ==============================================================================
 # EXPORT KE TEMPLATE INDESIGN (.idml)

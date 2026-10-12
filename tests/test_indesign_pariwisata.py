@@ -105,7 +105,6 @@ def _zip(r):
 def test_kumpulkan_kelas_membaca_tiga_periode_dan_tidak_menenuhkan_nilai():
     """Kelas ada di DB tapi nilainya NULL, atau periodenya tidak ada sama sekali,
     harus jadi NaN. Kalau nol, pembaca akan menyimpulkan TPK kelas itu nol."""
-    import pandas as pd
     from sqlalchemy import create_engine
 
     baris = [
@@ -140,7 +139,6 @@ def test_kumpulkan_kelas_membaca_tiga_periode_dan_tidak_menenuhkan_nilai():
 
 
 def test_periode_null_dan_tahun_lalu_terbaca_benar():
-    import pandas as pd
     from sqlalchemy import create_engine
 
     engine = create_engine("sqlite://")
@@ -433,7 +431,7 @@ def test_bulan_kosong_menjadi_celah_bukan_nol():
     tren = DATA[("tpk", "Hotel Bintang")]["tren"]
     assert any(v is None or math.isnan(v) for _, _, v in tren), \
         "fixture harus punya bulan tanpa data"
-    w, h = _png_ukuran(grafik_png(tren, "tpk", "TPK Series Hotel Bintang"))
+    w, _ = _png_ukuran(grafik_png(tren, "tpk", "TPK Series Hotel Bintang"))
     assert w > 2000, w
     assert grafik_png([(2026, m, None) for m in range(1, 9)], "tpk",
                       "TPK Series Hotel Bintang") is None, \
