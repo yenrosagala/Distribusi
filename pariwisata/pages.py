@@ -835,7 +835,6 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     # --- TAB 4: SERIES GRAPH (TREND ANALYSIS) ---
     with tab_series:
         st.markdown("### Data Series Graph (Analisis Tren)")
-        engine = etl_engine.engine
         table_name = table
 
         s1, s2 = st.columns(2)
@@ -858,19 +857,28 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
                 st.warning("⚠️ Pilih minimal satu variabel indikator.")
                 return
 
-            query = f"SELECT * FROM {table_name}"
-            conditions, params = [], {}
-            if prov_series != "SEMUA":
-                conditions.append("kd_prov = :prov")
-                params["prov"] = prov_series
-            if kab_series != "SEMUA":
-                conditions.append("kd_kab = :kab")
-                params["kab"] = kab_series
-            if conditions:
-                query += " WHERE " + " AND ".join(conditions)
+            # ponytail: push aggregation to SQL (sum per period) to cut row count/IO;
+            # add cache key by filter+vars so identical renders avoid re-query.
+            # Upgrade path: if per-series grouping by entity needed later, extend SELECT/GROUP BY.
+            @st.cache_data
+            def _load_series(table_name, prov_series, kab_series, var_list):
+                cols_needed = ["year", "month", "kd_prov", "kd_kab"] + list(var_list)
+                select_cols = ", ".join(f'"{c}"' if c in ("year", "month", "kd_prov", "kd_kab") else c for c in cols_needed)
+                query = f"SELECT {select_cols} FROM {table_name}"
+                conditions, params = [], {}
+                if prov_series != "SEMUA":
+                    conditions.append("kd_prov = :prov")
+                    params["prov"] = prov_series
+                if kab_series != "SEMUA":
+                    conditions.append("kd_kab = :kab")
+                    params["kab"] = kab_series
+                if conditions:
+                    query += " WHERE " + " AND ".join(conditions)
+                df = pd.read_sql(text(query), etl_engine.engine, params=params)
+                return df
 
             try:
-                df = pd.read_sql(text(query), engine, params=params)
+                df = _load_series(table, prov_series, kab_series, tuple(var_series))
             except Exception as e:
                 st.error(f"Gagal membaca data: {e}")
                 return
