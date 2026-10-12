@@ -75,9 +75,9 @@ DATA = {
 # Angka模板 asli per story, dipakai untuk mendeteksi slot yang tidak tertimpa.
 TPL_NUMS = {
     "uc98": ["52,13", "49,76", "2,37"], "ud82": ["21,55", "23,34"],
-    "ud2a": ["1,42", "1,63"], "ue1d": ["5,16", "5,77"],
-    "uc40": ["2,37", "50,63"], "ub99": ["50,63", "52,13"],
-    "ud40": ["15,21", "17,60"], "uddb": ["15,21", "17,60"],
+    "ud2a": ["1,42", "1,63"], "ue1d": ["3,13", "2,52"],
+    "uc40": ["2,37", "52,13"], "ub99": ["52,13", "49,76"],
+    "ud40": ["21,55", "23,34"], "uddb": ["1,76", "1,88"],
 }
 
 
@@ -487,24 +487,34 @@ def test_grafik_tanpa_data_memberi_peringatan_bukan_diam_diam():
         assert jenis in pesan[0], pesan[0]
 
 
-def test_paket_zip_berisi_idml_dan_semua_png():
-    """Tombol unduh harus memberi .zip: .idml + folder PNG/. Kalau PNG tidak ikut,
-    pengguna tidak bisa placing manual saat InDesign gagal menautkan otomatis."""
+def test_paket_zip_berisi_idml_dan_semua_aset_template():
+    """Tombol unduh harus memberi .zip: .idml + aset folder template (Links/,
+    Document fonts/). Tanpa itu tautan gambar & font putus saat dibuka di InDesign.
+    Gambar di dalam .idml (grafik/QR terbaru) menang atas aset template."""
     from modules.indesign_export import paket_zip
+
     r = _isi()
     z = _zip(r)
-    png_di_idml = {n.rsplit("/", 1)[-1] for n in z.namelist()
-                   if n.startswith("Links/") and n.lower().endswith(".png")}
-    assert png_di_idml, "ekspor tidak menghasilkan PNG sama sekali"
+    idml_links = {n for n in z.namelist()
+                  if n.startswith("Links/") and not n.endswith("/")}
+    assert idml_links, "ekspor tidak menghasilkan gambar apa pun"
+
+    base = DEFAULT_TEMPLATE.parent
+    aset = {f.relative_to(base).as_posix()
+            for sub in ("Links", "Document fonts")
+            for f in (base / sub).iterdir() if f.is_file()}
+    assert aset, f"folder template {base} tidak punya aset"
 
     nama = "BRS_Pariwisata_Papua_Juni_2026.idml"
-    zf = zipfile.ZipFile(io.BytesIO(paket_zip(r.idml_bytes, nama)))
+    zf = zipfile.ZipFile(io.BytesIO(paket_zip(r.idml_bytes, nama, template_dir=base)))
     assert zf.testzip() is None
     isi = set(zf.namelist())
     assert nama in isi
-    assert isi == {nama} | {f"PNG/{p}" for p in png_di_idml}, sorted(isi)
-    for p in png_di_idml:
-        assert zf.read(f"PNG/{p}") == z.read(f"Links/{p}"), f"isi PNG/{p} beda"
+    aset_hilang = aset - isi
+    assert not aset_hilang, f"aset template tidak ikut: {sorted(aset_hilang)}"
+    for n in idml_links:  # gambar terbaru dari .idml harus menang
+        assert zf.read(n) == z.read(n), f"{n} bukan versi .idml"
+    assert not any(n.startswith("PNG/") for n in isi), "folder PNG/ lama masih ada"
 
 
 if __name__ == "__main__":

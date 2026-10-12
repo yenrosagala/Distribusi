@@ -297,7 +297,7 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                 if not client and not get_openrouter_key():
                     st.error("AI tidak terkonfigurasi (Gemini & OpenRouter), narasi tidak dapat dibuat.")
                     return None
-                prompt = f"Table summary for {indicator.upper()} ({jenis}) in {province}:\n" + final_table.to_markdown() + "\n" + base_prompt_text
+                prompt = f"Table summary for {indicator.upper()} ({jenis}) in {province}:\n" + final_table.to_string() + "\n" + base_prompt_text
                 try:
                     with st.spinner(f'Membuat narasi AI untuk {jenis} {indicator.upper()}...'):
                         narrative_text = None

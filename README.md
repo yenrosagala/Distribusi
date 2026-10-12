@@ -30,7 +30,7 @@ one database, one engine, one connection config.
 ├── data/
 │   └── app_data.db            # Local SQLite fallback DB (seeded from both repos' original data)
 ├── templates/
-│   ├── BRS PARIWISATA PAPUA Template.idml           # Tourism BRS template
+│   ├── BRS PARIWISATA PAPUA SELATAN Template/      # Tourism BRS package (.idml/.indd/.pdf + fonts/links)
 │   └── BRS_Transportasi_Template Folder/            # InDesign BRS package (.idml/.indd/.pdf + fonts/links)
 ├── pariwisata/                # From dash-pariwisata, adapted to the shared DB
 │   ├── etl_engine.py          # ETLEngine — same transform logic, now runs on the shared SQLAlchemy engine

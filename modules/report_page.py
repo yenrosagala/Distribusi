@@ -480,7 +480,7 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
         st.session_state["gemini_key_index"] = 0
 
     num_keys = len(api_keys)
-    data_str = df_flat.to_markdown(index=False)
+    data_str = df_flat.to_string(index=False)
     
     prompt = (
         "Anda adalah Kepala Pusat Statistik / Penasihat Kebijakan Utama yang menyusun ringkasan eksekutif strategis berstandar tinggi bagi Dewan Pimpinan dan Pengambil Kebijakan.\n"
@@ -917,7 +917,9 @@ def render_indesign_export(meta, all_collected_data):
         res, m = stored
         nama_idml = f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.idml"
         st.download_button(
-            "📦 Download Paket (.zip: .idml + PNG)", data=paket_zip(res.idml_bytes, nama_idml),
+            "📦 Download Paket (.zip: .idml + aset + font)",
+            data=paket_zip(res.idml_bytes, nama_idml,
+                           template_dir=DEFAULT_IDML_TEMPLATE.parent),
             file_name=f"BRS_Transportasi_{m['prov'].replace(' ', '_')}_{m['bln']}_{m['thn']}.zip",
             mime="application/zip",
             key="dl_zip_trans",

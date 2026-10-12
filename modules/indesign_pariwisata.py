@@ -40,9 +40,24 @@ from modules.indesign_export import (
     set_segments,
 )
 
-DEFAULT_TEMPLATE = (
-    Path(__file__).resolve().parent.parent / "templates" / "BRS PARIWISATA PAPUA Template.idml"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+# Satu paket BRS Papua Selatan dipakai untuk SEMUA provinsi — nama provinsi di
+# dalamnya ditimpa oleh fill_brs_pariwisata_template (TPL_PROV_TOKENS).
+# level "full" = template utama; level lain hanya alias ke paket yang sama.
+_BRS_PARIWISATA = (
+    TEMPLATE_DIR / "BRS PARIWISATA PAPUA SELATAN Template"
+    / "BRS PARIWISATA PAPUA SELATAN (Data Juli 2026) rillis September 2026.idml"
 )
+TEMPLATES = {
+    lv: _BRS_PARIWISATA
+    for lv in ("full", "Papua", "Papua Selatan", "Papua Tengah", "Papua Pegunungan")
+}
+DEFAULT_TEMPLATE = TEMPLATES["full"]
+
+
+def resolve_template(level=None):
+    """Path .idml untuk ``level`` (provinsi); None / "full" -> template utama."""
+    return TEMPLATES.get(level, DEFAULT_TEMPLATE)
 
 BULAN = list(ABBR.keys())
 BULAN_N = {n: i + 1 for i, n in enumerate(BULAN)}
@@ -492,8 +507,15 @@ def _tulis_setelah_jangkar(psr, anchor, teks_baru, warnings, sid, tertulis=None)
 def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
                                  nomor_brs=None, tanggal_rilis=None,
                                  qr_bytes=None, qr_name=None,
-                                 infografis_bytes=None, infografis_name=None):
-    """Isi template BRS Pariwisata dengan data dari :func:`kumpulkan_kelas`."""
+                                 infografis_bytes=None, infografis_name=None,
+                                 level=None):
+    """Isi template BRS Pariwisata dengan data dari :func:`kumpulkan_kelas`.
+
+    ``template_bytes`` None -> dibaca dari :func:`resolve_template` menurut
+    ``level`` (None / "full" = template bawaan).
+    """
+    if template_bytes is None:
+        template_bytes = resolve_template(level).read_bytes()
     prev_bln, prev_thn = _prev_period(bln, int(thn))
     with zipfile.ZipFile(io.BytesIO(template_bytes)) as zf:
         order = zf.namelist()

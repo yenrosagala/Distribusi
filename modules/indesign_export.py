@@ -618,20 +618,32 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
     return patched > 0
 
 
-def paket_zip(idml_bytes, nama_idml):
-    """ZIP berisi .idml plus semua aset gambarnya di folder PNG/.
+def paket_zip(idml_bytes, nama_idml, template_dir=None):
+    """ZIP paket InDesign: .idml + seluruh aset folder template.
 
-    IDML sudah membawa Links/ sendiri, tapi saat InDesign tidak menautkan otomatis,
-    PNG terpisah memudahkan placing manual untuk memastikan gambar atau tautannya
-    yang bermasalah. Nama file PNG sengaja sama dengan yang ada di Links/.
+    ``template_dir`` = folder template asli; isinya (``Links/``, ``Document fonts/``,
+    dst.) ikut diunduh supaya tautan gambar (.jpg/.png) dan font dokumen tidak
+    putus saat dibuka di InDesign. Gambar di dalam .idml (grafik/QR/infografis
+    terbaru) menimpa aset template yang namanya sama. File .idml/.indd template
+    dilewati karena .idml sudah diganti versi terisi.
     """
+    with zipfile.ZipFile(io.BytesIO(idml_bytes)) as paket:
+        idml_names = {n for n in paket.namelist() if not n.endswith("/")}
+        idml_links = {n: paket.read(n) for n in idml_names if n.startswith("Links/")}
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(nama_idml, idml_bytes)
-        with zipfile.ZipFile(io.BytesIO(idml_bytes)) as paket:
-            for n in sorted(paket.namelist()):
-                if n.startswith("Links/") and not n.endswith("/"):
-                    z.writestr(f"PNG/{n.rsplit('/', 1)[-1]}", paket.read(n))
+        if template_dir:
+            base = Path(template_dir)
+            for f in sorted(base.rglob("*")):
+                if not f.is_file() or f.suffix.lower() in (".idml", ".indd"):
+                    continue
+                arc = f.relative_to(base).as_posix()
+                if arc not in idml_links:
+                    z.write(f, arc)
+        for n, data in sorted(idml_links.items()):
+            z.writestr(n, data)
     return buf.getvalue()
 
 

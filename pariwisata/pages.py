@@ -12,9 +12,9 @@ from modules.database import is_local_dummy_db, get_engine
 from modules.etl_engine import MONTH_NAMES
 from modules.indesign_export import paket_zip
 from modules.indesign_pariwisata import (
-    DEFAULT_TEMPLATE as DEFAULT_TEMPLATE_PARI,
     fill_brs_pariwisata_template,
     kumpulkan_kelas,
+    resolve_template as resolve_template_pari,
 )
 from pariwisata.ai import generate_akomodasi_tables
 
@@ -565,20 +565,21 @@ def render_indesign_pariwisata(etl_engine, prov, thn, bln):
                     label_visibility="collapsed"
                 )
 
-        if DEFAULT_TEMPLATE_PARI.exists():
-            st.caption(f"Template: **{DEFAULT_TEMPLATE_PARI.name}** (bawaan)")
+        template_path = resolve_template_pari(prov)
+        if template_path.exists():
+            st.caption(f"Template: **{template_path.name}** ({prov})")
         else:
-            st.caption("⚠️ Template bawaan tidak ditemukan.")
+            st.caption("⚠️ Template tidak ditemukan.")
 
     if st.button("🎨 Buat File InDesign (.idml)", width='stretch', key="btn_idml_pari"):
-        if not DEFAULT_TEMPLATE_PARI.exists():
-            st.error("Template bawaan tidak ditemukan.")
+        if not resolve_template_pari(prov).exists():
+            st.error("Template tidak ditemukan.")
             return
         try:
             with st.spinner("Mengisi template…"):
                 data = kumpulkan_kelas(etl_engine.engine, prov, thn, bln_nama)
                 res = fill_brs_pariwisata_template(
-                    DEFAULT_TEMPLATE_PARI.read_bytes(), prov, thn, bln_nama, data,
+                    None, prov, thn, bln_nama, data, level=prov,
                     nomor_brs=nomor_brs.strip() or None,
                     tanggal_rilis=tgl_rilis.strip() or None,
                     qr_bytes=qr_up.getvalue() if qr_up is not None else None,
@@ -597,7 +598,9 @@ def render_indesign_pariwisata(etl_engine, prov, thn, bln):
     res, prov_s, thn_s, bln_s = stored
     nama_idml = f"BRS_Pariwisata_{prov_s.replace(' ', '_')}_{bln_s}_{thn_s}.idml"
     st.download_button(
-        "📦 Download Paket (.zip: .idml + PNG)", data=paket_zip(res.idml_bytes, nama_idml),
+        "📦 Download Paket (.zip: .idml + aset + font)",
+        data=paket_zip(res.idml_bytes, nama_idml,
+                       template_dir=resolve_template_pari(prov_s).parent),
         file_name=f"BRS_Pariwisata_{prov_s.replace(' ', '_')}_{bln_s}_{thn_s}.zip",
         mime="application/zip",
         width='stretch',
