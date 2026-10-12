@@ -416,6 +416,49 @@ def _add_pptx_narration(slide, para1, para2, left, top, width, height):
             run.font.size = Pt(11)
 
 
+def _fig_to_png(fig, width=1100, height=400):
+    """Render a plotly figure to PNG bytes via matplotlib — tidak butuh Chrome.
+
+    ponytail: hanya menangani bar trace bertumpuk (satu-satunya jenis yang dipakai
+    dashboard). Kalau deck nanti memuat line/scatter, tambahkan cabangnya di sini.
+    Angka di dalam batang sengaja dilewatkan — nilainya sudah ada di slide tabel.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    traces = list(fig.data)
+    xs = list(traces[0].x)
+    x = list(range(len(xs)))
+
+    mfig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
+    bottom = [0.0] * len(xs)
+    for tr in traces:
+        y = [0.0 if v is None else float(v) for v in tr.y]
+        ax.bar(x, y, bottom=bottom, width=0.62,
+               color=getattr(tr.marker, "color", None) or "#1F4E79",
+               label=tr.name)
+        bottom = [b + v for b, v in zip(bottom, y)]
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(xs, fontsize=10, color="#333333")
+    title = fig.layout.title.text if fig.layout.title else None
+    if title:
+        ax.set_title(title, fontsize=13, color="#0F172A")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.08),
+              ncol=len(traces), frameon=False)
+    ax.yaxis.grid(True, color="#D9D9D9", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    mfig.tight_layout(pad=0.6)
+
+    buf = io.BytesIO()
+    mfig.savefig(buf, format="png", facecolor="white")
+    plt.close(mfig)
+    return buf.getvalue()
+
+
 def _build_pptx(sections):
     """1 deck: tiap moda 2 slide — (1) grafik PNG, (2) tabel pertumbuhan + narasi."""
     prs = Presentation()
@@ -428,7 +471,7 @@ def _build_pptx(sections):
         _slide_title(s1, f"Transportasi {moda} — {bln} {thn}: Grafik")
         x = Inches(0.4)
         for fig in sec["figs"]:
-            img = fig.to_image(format="png", width=1100, height=400)
+            img = _fig_to_png(fig, width=1100, height=400)
             s1.shapes.add_picture(io.BytesIO(img), x, Inches(1.1), width=Inches(6.15))
             x += Inches(6.15) + Inches(0.25)
 

@@ -1,24 +1,27 @@
-"""Smoke test untuk builder deck PPTX dashboard (tanpa kaleido)."""
+"""Smoke test untuk builder deck PPTX dashboard (tanpa kaleido/Chrome)."""
 import io
 
 import pandas as pd
 
-from modules.dashboard_page import _build_pptx
+from modules.dashboard_page import _build_pptx, build_stacked_bar
+
+_DF = pd.DataFrame(
+    {"datang": [10, 20, 30], "berangkat": [5, 8, 12]},
+    index=["Papua", "Papua Selatan", "Papua Tengah"],
+)
 
 
-class FakeFig:
-    def to_image(self, format="png", width=None, height=None):
-        # PNG 1x1 transparan.
-        return bytes.fromhex(
-            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
-            "890000000a49444154789c6360000002000154a24f4f0000000049454e44ae426082"
-        )
+def _fig():
+    return build_stacked_bar(
+        _DF, "datang", "berangkat", "Datang", "Berangkat",
+        "#1F4E79", "#C00000", "GRAFIK UJI",
+    )
 
 
 def _section(moda="Laut"):
     return {
         "moda": moda, "bln": "Agustus", "thn": 2026,
-        "figs": [FakeFig(), FakeFig()],
+        "figs": [_fig(), _fig()],
         "tables": [
             pd.DataFrame({"PERKEMBANGAN X (%)": [1.5, -2.0, None]},
                          index=["Papua", "Papua Barat", "Papua Tengah"]),

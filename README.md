@@ -122,8 +122,9 @@ tables (`wilayah`, `transportasi_laut`, `transportasi_udara`,
 - `requirements.txt` drops a few unused/incorrect entries from
   dash-pariwisata's original file (`Dash` — never imported at runtime,
   `gunicorn` — not used by Streamlit, `datetime` — a stdlib module, not a
-  pip package). It adds `python-pptx` and `kaleido` for the dashboard's
-  PowerPoint deck export.
+  pip package). It adds `python-pptx` for the dashboard's PowerPoint deck
+  export — charts render through the existing matplotlib dependency, so no
+  Chrome or kaleido is required.
 
 ## Verification status
 
