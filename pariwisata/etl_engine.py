@@ -8,6 +8,10 @@ from sqlalchemy import text
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Provincial TPK/RLMTGAB reference (the uploaded file's Prov_Jenis sheet): the
+# official per-jenis estimate that replaces the mean in table/chart averages.
+PARIWISATA_REF_AVG = 'pariwisata_ref_avg'
+
 
 class ETLEngine:
     """Tourism (pariwisata) accommodation-data ETL engine.
@@ -50,6 +54,16 @@ class ETLEngine:
                     indicator TEXT,
                     narrative TEXT,
                     PRIMARY KEY (province, year, month, jenis_akomodasi, indicator)
+                )
+            """))
+            conn.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS {PARIWISATA_REF_AVG} (
+                    kd_prov TEXT,
+                    jenis_akomodasi TEXT,
+                    year INTEGER,
+                    month INTEGER,
+                    tpk REAL,
+                    rlmtgab REAL
                 )
             """))
 
@@ -141,11 +155,30 @@ class ETLEngine:
             logger.warning(f"File '{filename}' yielded 0 rows.")
             return
 
+        # Sheet Prov_Jenis carries the official provincial TPK/RLMTGAB estimate
+        # per jenis; store it as the reference "average" for this period.
+        ref_rows = pd.DataFrame()
+        if 'Prov_Jenis' in excel_file.sheet_names and year is not None and month is not None:
+            ref_rows = self._transform_data(
+                pd.read_excel(excel_file, sheet_name='Prov_Jenis'), year=year, month=month,
+            )
+            # Prov_Jenis also carries mktj/mkts/mtgab; keep only the ref table's
+            # columns or the insert fails on "no such column".
+            ref_cols = ['kd_prov', 'jenis_akomodasi', 'year', 'month', 'tpk', 'rlmtgab']
+            ref_rows = ref_rows[[c for c in ref_cols if c in ref_rows.columns]]
+
         with self.engine.begin() as conn:
             if year is not None and month is not None:
                 conn.execute(
                     text(f"DELETE FROM {self.general_table_name} WHERE year = :year AND month = :month"),
                     {"year": year, "month": month},
                 )
+                if not ref_rows.empty:
+                    conn.execute(
+                        text(f"DELETE FROM {PARIWISATA_REF_AVG} WHERE year = :year AND month = :month"),
+                        {"year": year, "month": month},
+                    )
             df_transformed.to_sql(self.general_table_name, conn, if_exists='append', index=False)
+            if not ref_rows.empty:
+                ref_rows.to_sql(PARIWISATA_REF_AVG, conn, if_exists='append', index=False)
             logger.info(f"Successfully loaded {len(df_transformed)} rows.")

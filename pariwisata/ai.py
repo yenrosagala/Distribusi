@@ -9,9 +9,37 @@ from sqlalchemy import text
 
 from modules.ai_backup import get_openrouter_key, openrouter_generate
 from modules.config import read_secret
+from modules.etl_engine import MONTH_NAMES
 from modules.report_page import normalize_narrative, italicize_english
+from pariwisata.etl_engine import PARIWISATA_REF_AVG
 
 logger = logging.getLogger(__name__)
+
+
+def _month_year(year, month):
+    """Indonesian period label, e.g. (2026, 8) -> 'Agustus 2026'."""
+    return f"{MONTH_NAMES[int(month) - 1]} {int(year)}"
+
+
+def _load_ref_avg(etl_engine_instance, province):
+    """Official TPK/RLMTGAB per jenis (uploaded Prov_Jenis sheet).
+
+    Returns {(jenis_akomodasi, year, month): {'tpk', 'rlmtgab'}}. Missing table
+    (older DB) or no rows -> {}, so the caller falls back to the computed mean.
+    """
+    try:
+        with etl_engine_instance.engine.connect() as conn:
+            df = pd.read_sql_query(
+                text(f"SELECT jenis_akomodasi, year, month, tpk, rlmtgab FROM {PARIWISATA_REF_AVG} WHERE kd_prov = :prov"),
+                conn, params={"prov": str(province).strip()},
+            )
+    except Exception:
+        logger.warning("Gagal baca tabel referensi %s", PARIWISATA_REF_AVG, exc_info=True)
+        return {}
+    return {
+        (r.jenis_akomodasi, int(r.year), int(r.month)): {"tpk": float(r.tpk), "rlmtgab": float(r.rlmtgab)}
+        for r in df.itertuples()
+    }
 
 
 def get_gemini_client():
@@ -95,6 +123,8 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
+    ref_avg = _load_ref_avg(etl_engine_instance, province_str)
+
     # Domain kelas per jenis, diambil dari SELURUH tabel — bukan hanya periode yang
     # sedang ditampilkan. Papua Pegununganmis. hanya punya Bintang 1 & 3 dan Kelas
     # 1, 2 & 4, sedangkan provinsi lain punya 1-4. Kalau tabel hanya memuat baris
@@ -144,6 +174,14 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                 f"Seri {year - 1} muncul otomatis begitu datanya tersedia.",
                 icon="ℹ️",
             )
+        # Titik bulan yang punya rujukan resmi (sheet Prov_Jenis) dipakai apa
+        # adanya, bukan rataan kelas.
+        if not df_trend.empty:
+            for rec in df_trend.itertuples():
+                ref = ref_avg.get((rec.jenis_akomodasi, int(rec.year), int(rec.month)))
+                if ref:
+                    df_trend.loc[rec.Index, "tpk"] = ref["tpk"]
+                    df_trend.loc[rec.Index, "rlmtgab"] = ref["rlmtgab"]
 
     indicators = ['tpk', 'rlmtgab']
     # Semua jenis ikut tampil, bahkan yang cuma ada di periode lalu — sama seperti
@@ -209,11 +247,29 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                 'current': [display_df['current'].mean()],
                 'change_prev': [display_df['change_prev'].mean()],
                 'change_last': [display_df['change_last'].mean()]
-            }, index=['Average']).round(2)
+            }, index=['Total']).round(2)
+
+            # Rujukan resmi (sheet Prov_Jenis) menggantikan rataan pada periode
+            # yang file-nya diunggah; sel lain tetap rataan kelas.
+            for cell, (yr, mo) in (("last_year", (last_year, month)), ("prev", (prev_year, prev_month)), ("current", (year, month))):
+                ref = ref_avg.get((jenis, yr, mo))
+                if ref:
+                    avg_row.loc["Total", cell] = round(ref[indicator], 2)
+            avg_row["change_prev"] = (avg_row["current"] - avg_row["prev"]).round(2)
+            avg_row["change_last"] = (avg_row["current"] - avg_row["last_year"]).round(2)
 
             final_table = pd.concat([display_df, avg_row])
             for col in ['change_prev', 'change_last']:
                 final_table[col] = final_table[col].apply(lambda x: f'{x:+.2f} pts' if pd.notna(x) else '-')
+
+            # Header kolom = periode yang diwakilinya (bukan "prev"/"last_year").
+            final_table = final_table.rename(columns={
+                'last_year': _month_year(last_year, month),
+                'prev': _month_year(prev_year, prev_month),
+                'current': _month_year(year, month),
+                'change_prev': f"Δ vs {_month_year(prev_year, prev_month)}",
+                'change_last': f"Δ vs {_month_year(last_year, month)}",
+            })
 
             # Narratives are served from the database first. Only an admin ever calls the
             # model, so an ordinary page view never spends an API call.
