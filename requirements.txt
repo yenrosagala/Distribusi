@@ -16,3 +16,5 @@ requests>=2.31
 
 python-pptx
 kaleido
+
+plotly_get_chrome
