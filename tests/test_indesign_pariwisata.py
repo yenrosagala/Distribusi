@@ -557,6 +557,31 @@ def test_kumpulkan_kelas_pakai_angka_resmi_prov_jenis():
         "titik grafik Agustus 2026 harus angka resmi"
 
 
+def test_infografis_jpeg_menautkan_link_pariwisata():
+    """Regresi: nama link Infografis template berawalan "95 " sehingga dulu tak
+    cocok dengan token "Infografis" -> gambar unggahan tidak pernah dipasang
+    (berlaku untuk PNG maupun JPEG)."""
+    import re
+    from urllib.parse import unquote
+
+    res = fill_brs_pariwisata_template(
+        DEFAULT_TEMPLATE.read_bytes(), "Papua Selatan", 2026, "Agustus", {},
+        infografis_bytes=b"\xff\xd8\xff\xe0JPEGDATA", infografis_name="info saya.jpeg")
+    z = zipfile.ZipFile(io.BytesIO(res.idml_bytes))
+    names = z.namelist()
+    assert any(n.startswith("Links/Infografis") and n.endswith(".jpeg") for n in names), names
+
+    uris = []
+    for n in names:
+        if n.startswith(("Spreads/", "MasterSpreads/")) and n.endswith(".xml"):
+            uris += re.findall(r'LinkResourceURI="([^"]*)"',
+                               z.read(n).decode("utf-8", "replace"))
+    info = [u for u in uris if "Infografis" in unquote(u)]
+    assert info, "link Infografis tidak ada di spread"
+    assert all(not u.startswith("file:") for u in info), f"link Infografis masih absolut: {info}"
+    assert info[0].endswith(".jpeg"), info
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

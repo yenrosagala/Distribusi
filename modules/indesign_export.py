@@ -553,7 +553,7 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
     lain. Di sini filenya ditulis ke folder Links/ di dalam paket dan LinkResourceURI
     diganti ke path relatif.
 
-    ``token`` = potongan awal nama file di Links/ yang dicari ('qrcode',
+    ``token`` = potongan nama file di Links/ yang dicari ('qrcode',
     'Infografis', 'TPK Series Hotel Bintang'). Pencocokan dilakukan pada nama file
     yang sudah di-decode: template meng-encode-URL nama tersebut
     ('TPK%20Series%20Hotel%20Bintang.png', '95%20Infografis%20...jpg'), jadi
@@ -592,7 +592,7 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
         if not uri:
             return tag
         base = unquote(uri.group(1)).rsplit("/", 1)[-1]
-        if not base.startswith(token):
+        if token not in base:
             return tag
         tag = re.sub(rb'LinkResourceURI="[^"]*"',
                      b'LinkResourceURI="' + uri_pakai + b'"', tag)
