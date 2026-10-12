@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
-from modules.database import is_local_dummy_db
+from modules.database import is_local_dummy_db, get_engine
 from modules.etl_engine import MONTH_NAMES
 from modules.indesign_export import paket_zip
 from modules.indesign_pariwisata import (
@@ -649,6 +649,31 @@ def _pari_delete_filter(prov, year, month):
     return (" AND ".join(conditions) if conditions else "1=1"), params
 
 
+MONTH_MAP = {name: i for i, name in enumerate(MONTH_NAMES, start=1)}
+
+
+def _get_kabupaten_list():
+    try:
+        engine = get_engine()
+        df = pd.read_sql(text(f"SELECT DISTINCT kd_kab FROM {ETL_ALL_DATA}"), engine)
+        kabs = df["kd_kab"].dropna().astype(str).unique().tolist()
+        return sorted(kabs)
+    except Exception:
+        return []
+
+
+ETL_ALL_DATA = "all_data"  # shared table
+
+
+PARI_VAR_OPTIONS = [
+    "mktj",
+    "mkts",
+    "mtgab",
+    "tpk",
+    "rlmtgab",
+]
+
+
 def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     st.markdown('<div class="hero-title">Admin: Ingesti Data ETL</div>', unsafe_allow_html=True)
     # Pariwisata lives in one table (all_data) with kd_prov / year / month as the
@@ -657,8 +682,8 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
     default_year = int(year_list[-1]) if year_list else 2026
     default_month = int(month_list[-1]) if month_list else 1
 
-    tab_upload, tab_correct, tab_delete = st.tabs(
-        ["📥 Ingesti Data (Upload)", "🛠️ Koreksi Manual", "⚠️ Hapus Data"]
+    tab_upload, tab_correct, tab_delete, tab_series = st.tabs(
+        ["📥 Ingesti Data (Upload)", "🛠️ Koreksi Manual", "⚠️ Hapus Data", "📊 Data Series Graph"]
     )
 
     # --- TAB 1: UPLOAD ---
@@ -806,3 +831,105 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
                     st.rerun()
                 except Exception as e:
                     st.error(f"Gagal menghapus data: {e}")
+
+    # --- TAB 4: SERIES GRAPH (TREND ANALYSIS) ---
+    with tab_series:
+        st.markdown("### Data Series Graph (Analisis Tren)")
+        engine = etl_engine.engine
+        table_name = table
+
+        s1, s2 = st.columns(2)
+        with s1:
+            prov_series = st.selectbox("Provinsi", ["SEMUA"] + TARGET_PROVINCES, key="pari_series_prov")
+        with s2:
+            kab_options = ["SEMUA"] + _get_kabupaten_list()
+            kab_series = st.selectbox("Kabupaten/Kota", kab_options, key="pari_series_kab")
+
+        var_series = st.multiselect(
+            "Indikator Variabel",
+            PARI_VAR_OPTIONS,
+            default=[PARI_VAR_OPTIONS[0]],
+            key="pari_series_vars",
+            help="Pilih satu atau lebih variabel untuk diplot pada grafik.",
+        )
+
+        if st.button("📈 Buat Visualisasi Grafik", key="pari_series_gen", type="primary", width="stretch"):
+            if not var_series:
+                st.warning("⚠️ Pilih minimal satu variabel indikator.")
+                return
+
+            query = f"SELECT * FROM {table_name}"
+            conditions, params = [], {}
+            if prov_series != "SEMUA":
+                conditions.append("kd_prov = :prov")
+                params["prov"] = prov_series
+            if kab_series != "SEMUA":
+                conditions.append("kd_kab = :kab")
+                params["kab"] = kab_series
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+
+            try:
+                df = pd.read_sql(text(query), engine, params=params)
+            except Exception as e:
+                st.error(f"Gagal membaca data: {e}")
+                return
+
+            if df.empty:
+                st.warning("⚠️ Tidak ditemukan data yang cocok dengan kombinasi filter Anda.")
+                return
+
+            df = df.copy()
+            df["tahun_int"] = df["year"].astype(int)
+            df["month_num"] = df["month"].astype(int)
+            df["periode"] = df["month_num"].apply(lambda m: bulan(m)) + " " + df["tahun_int"].astype(str)
+
+            group_cols = ["tahun_int", "month_num", "periode"]
+            frames = []
+            for var in var_series:
+                var_title = var.replace("_", " ").title()
+                g = df.groupby(group_cols)[var].sum().reset_index()
+                g["seri"] = var_title
+                g = g.rename(columns={var: "nilai"})
+                frames.append(g)
+
+            df_long = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=group_cols + ["seri", "nilai"])
+
+            periode_order = (
+                df_long[["tahun_int", "month_num", "periode"]]
+                .drop_duplicates()
+                .sort_values(["tahun_int", "month_num"])["periode"]
+                .tolist()
+            )
+
+            wilayah_label = "Seluruh Wilayah"
+            if prov_series != "SEMUA" and kab_series != "SEMUA":
+                wilayah_label = f"{kab_series}, {prov_series}"
+            elif prov_series != "SEMUA":
+                wilayah_label = prov_series
+            elif kab_series != "SEMUA":
+                wilayah_label = kab_series
+
+            judul = ", ".join(v.replace("_", " ").title() for v in var_series)
+
+            try:
+                fig = px.line(
+                    df_long,
+                    x="periode",
+                    y="nilai",
+                    color="seri",
+                    category_orders={"periode": periode_order},
+                    title=f"Tren {judul} — {wilayah_label}",
+                    markers=True,
+                    template="plotly_white",
+                )
+                fig.update_layout(xaxis_title="Periode Waktu", yaxis_title="Nilai", legend_title="Indikator")
+                st.plotly_chart(fig, width="stretch")
+            except Exception as e:
+                st.error(f"Gagal membuat grafik: {e}")
+
+            with st.expander("📋 Lihat Tabel Data Mentah di Balik Grafik"):
+                display_df = df_long.drop(columns=["tahun_int", "month_num"]).rename(
+                    columns={"periode": "Periode", "seri": "Seri", "nilai": "Nilai"}
+                )
+                st.dataframe(display_df, width="stretch")
