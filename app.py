@@ -1,8 +1,11 @@
+import os
 from pathlib import Path
+
 import streamlit as st
 
 import modules.admin_page as transportasi_admin
 import modules.dashboard_page as transportasi_dashboard
+from modules.config import load_project_env
 from modules.database import get_engine, init_db, init_narrative_table
 import modules.report_page as transportasi_report
 import pariwisata.pages as pariwisata_pages
@@ -58,13 +61,20 @@ if "authenticated" not in st.session_state:
 if "section" not in st.session_state:
   st.session_state["section"] = "pariwisata"
 
+# Login credentials. Values below are local-dev defaults only; override via
+# LOGIN_ADMIN_PASSWORD / LOGIN_USER_PASSWORD in the project-root .env
+# (gitignored) or the real environment.
+load_project_env()
+_ADMIN_PASSWORD = os.getenv("LOGIN_ADMIN_PASSWORD", "admin123")
+_USER_PASSWORD = os.getenv("LOGIN_USER_PASSWORD", "user123")
+
 USERS = {
     "admin": {
-        "password": "admin123",
+        "password": _ADMIN_PASSWORD,
         "role": "admin",
         "name": "Database Administrator",
     },
-    "user": {"password": "user123", "role": "user", "name": "General Analyst"},
+    "user": {"password": _USER_PASSWORD, "role": "user", "name": "General Analyst"},
 }
 
 # ============================================================
@@ -84,7 +94,7 @@ if not st.session_state["authenticated"]:
 
         st.markdown(
             """
-            <h2 style='text-align:center; color:#0F172A; margin-top:8px;'>Dashboard <br> Statistik Distribusi & Jasa <br> BPS Papua</h2>
+            <h1 style='text-align:center; color:#0F172A; margin-top:8px; font-size:24px;'>Dashboard <br> Statistik Distribusi & Jasa <br> BPS Papua</h1>
             <p style='text-align:center; color:#64748B; font-size:13px; margin:4px 0 18px 0;'>
                 Sign in to the Papua Pariwisata &amp; Transportasi intelligence platform
             </p>
@@ -96,13 +106,11 @@ if not st.session_state["authenticated"]:
             username = st.text_input(
                 "Nama Pengguna",
                 placeholder="admin atau user",
-                help="Akun yang terdaftar di USERS. Gunakan 'admin' untuk akses lengkap.",
             )
             password = st.text_input(
                 "Kata Sandi",
                 type="password",
                 placeholder="Masukkan kata sandi",
-                help="Sandi akun ini. Kosongkan bila akun tidak memakai sandi.",
             )
             submit = st.form_submit_button(
                 "Masuk", type="primary", width='stretch'
@@ -237,7 +245,7 @@ month_list = (
 active_meta = next(s for s in SECTIONS if s["id"] == section)
 st.markdown(
     f'<div class="section-header"><span class="section-icon">{active_meta["icon"]}</span>'
-    f'<div><div class="section-title">{active_meta["title"]}</div>'
+    f'<div><h1 class="section-title">{active_meta["title"]}</h1>'
     f'<div class="section-subtitle">{active_meta["subtitle"]}</div></div></div>',
     unsafe_allow_html=True,
 )

@@ -501,7 +501,7 @@ def _download_pptx(sections):
 # MAIN PAGE
 # ==============================================================================
 def show_dashboard_page():
-    st.title("📊 Dashboard Statistik Perkembangan Transportasi")
+    st.header("📊 Dashboard Statistik Perkembangan Transportasi")
 
     engine = get_engine()
     periods = get_available_periods(engine)

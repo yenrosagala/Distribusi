@@ -828,22 +828,6 @@ def _kab_lookup_brs(name):
     return get_location_metadata(name)["kab"]
 
 def render_indesign_export(meta, all_collected_data):
-    # CSS injection to make dark button text clearly visible (white)
-    # Hanya tombol berlatar gelap/amber yang jadi putih. Tombol putih (sidebar,
-    # secondary, unduh) harus tetap tinta gelap — putih di atas putih hilang.
-    st.markdown("""
-        <style>
-        div[data-testid="stMain"] .stButton>button[kind="primary"],
-        div[data-testid="stMain"] .stButton>button[kind="primary"] * {
-            color: #FFFFFF !important;
-        }
-        div[data-testid="stDownloadButton"] button,
-        div[data-testid="stDownloadButton"] button * {
-            color: #0F172A !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
     st.markdown("---")
     st.subheader("🎨 Isi Template InDesign (BRS)")
     st.caption(
@@ -999,7 +983,7 @@ def meta_matches_filter(meta, now):
 
 
 def show_report_page():
-    st.title("📋 Laporan Komparatif Strategis")
+    st.header("📋 Laporan Komparatif Strategis")
     
     c1, c2, c3 = st.columns(3)
     with c1:

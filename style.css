@@ -146,7 +146,7 @@ h1, h2, h3{ font-weight:700; letter-spacing:-0.01em; color: var(--ink); }
     background: var(--primary); color:var(--ink);
     display:flex; align-items:center; justify-content:center; font-size:22px;
 }
-.section-title{ font-size:24px; font-weight:800; color:var(--ink); line-height:1.2; }
+.section-title{ font-size:24px; font-weight:800; color:var(--ink); line-height:1.2; margin:0; }
 .section-subtitle{ font-size:13px; color:var(--ink-dim); margin-top:2px; }
 
 /* ---------- tabs — the in-page navigation for each section ----------
@@ -331,3 +331,40 @@ hr{ border-color: var(--line) !important; }
        sumber "tombol biru vs amber" yang Anda lihat. */
     
     /* Tabs Styling — dihapus, duplikat dari blok tab utama di atas. */
+
+/* ============================================================
+   LAYOUT POLISH — readable, centered content on wide screens
+   ============================================================ */
+
+/* layout="wide" runs content edge-to-edge; on large monitors that stretches
+   text lines, cards and tables past a comfortable reading width. Cap and
+   centre the main column; tighten the gutters when the viewport is small. */
+[data-testid="stMainBlockContainer"],
+[data-testid="stMain"] .block-container{
+    max-width: 1500px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-top: 2rem;
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+    padding-bottom: 3rem;
+}
+@media (max-width: 900px){
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stMain"] .block-container{
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+/* Even vertical rhythm between stacked top-level blocks (cards, charts, tabs) */
+[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"]{
+    gap: 1rem;
+}
+
+/* Charts and tables stay inside their card instead of overflowing on small screens */
+[data-testid="stMain"] .js-plotly-plot,
+[data-testid="stMain"] [data-testid="stDataFrame"]{
+    max-width: 100%;
+}
+

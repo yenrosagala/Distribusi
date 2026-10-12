@@ -90,7 +90,7 @@ def _month_index(fig, name):
 def test_labels_mark_selected_month_in_both_years():
     """June is labelled on 2026 and on the same month of 2025, nowhere else."""
     fig = _render(month=6)
-    juni = _month_index(fig, "Juni")
+    juni = _month_index(fig, "Jun")
     for year in (str(YEAR), str(YEAR - 1)):
         tr = _by_year(fig)[year]
         assert _labelled_indexes(tr) == [juni], (year, list(tr.text))
@@ -99,7 +99,7 @@ def test_labels_mark_selected_month_in_both_years():
 
 def test_label_text_is_the_value():
     fig = _render(month=6)
-    juni = _month_index(fig, "Juni")
+    juni = _month_index(fig, "Jun")
     tr = _by_year(fig)[str(YEAR)]
     assert str(tr.text[juni]).replace(",", "") == f"{tr.y[juni]:.2f}"
 
@@ -107,7 +107,7 @@ def test_label_text_is_the_value():
 def test_month_none_falls_back_to_latest_available_month():
     """No month selected -> label the newest month the selected year actually has."""
     fig = _render(month=None)
-    agustus = list(fig.data[0].x).index("Agustus")
+    agustus = list(fig.data[0].x).index("Agu")
     for year in (str(YEAR), str(YEAR - 1)):
         assert _labelled_indexes(_by_year(fig)[year]) == [agustus]
 
@@ -115,7 +115,7 @@ def test_month_none_falls_back_to_latest_available_month():
 def test_hover_uses_human_label_not_column_name():
     fig = _render(month=6)
     for tr in fig.data:
-        assert "TPK (Occupancy Rate)" in tr.hovertemplate, tr.hovertemplate
+        assert "Tingkat Penghunian Kamar (TPK)" in tr.hovertemplate, tr.hovertemplate
         assert "tpk=" not in tr.hovertemplate, tr.hovertemplate
 
 
@@ -218,9 +218,12 @@ def test_legend_text_meets_wcag_aa():
 
 
 def test_only_the_requested_accommodation_type_is_plotted():
-    """Both types arrive in one frame; the chart must not merge them into one series."""
+    """Both types arrive in one frame; the chart must not merge them into one series.
+
+    Also the series stops at the selected month (June), not the full year.
+    """
     fig = _render(month=6)
-    assert len(fig.data[0].x) == 12
+    assert len(fig.data[0].x) == 6
     non_bintang = _render(month=6, jenis=NON_BINTANG)
     tpk_bintang = _by_year(fig)[str(YEAR)].y[0]
     tpk_non = _by_year(non_bintang)[str(YEAR)].y[0]

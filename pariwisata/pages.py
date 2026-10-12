@@ -83,8 +83,8 @@ def load_geodata():
 
 JENIS_LABELS = {"Hotel Bintang": "Klasifikasi Bintang", "Hotel Non Bintang": "Klasifikasi NonBintang"}
 INDICATOR_META = {
-    "tpk": {"label": "TPK (Occupancy Rate)", "unit": "%"},
-    "rlmtgab": {"label": "RLMTGAB (Length of Stay)", "unit": " malam"},
+    "tpk": {"label": "Tingkat Penghunian Kamar (TPK)", "unit": "%"},
+    "rlmtgab": {"label": "Rata-rata Lama Menginap (RLMT)", "unit": " malam"},
 }
 
 
@@ -245,7 +245,7 @@ def _infographic_data(_etl_engine, indicator, year, month, prev_year, prev_month
 # PAGE — HOME DASHBOARD
 # ============================================================
 def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list):
-    st.markdown('<div class="hero-title">👋 Selamat datang, ' + st.session_state["name"] + '</div>', unsafe_allow_html=True)
+    st.markdown('<h2 class="hero-title">👋 Selamat datang, ' + st.session_state["name"] + '</h2>', unsafe_allow_html=True)
 
     if not df_info.empty:
         periods = sorted(periods_in(df_info))
@@ -281,25 +281,21 @@ def render_home_dashboard(etl_engine, df_info, prov_list, year_list, month_list)
 # PAGE — INFOGRAPHIC STAT MAP
 # ============================================================
 def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list):
-    st.markdown('<div class="filter-pill">', unsafe_allow_html=True)
     f_col1, f_col2, f_col3 = st.columns(3)
     with f_col1:
         map_indicator = st.selectbox(
-            "Select Indicator",
+            "Indikator",
             options=[("tpk", "TPK (Occupancy Rate)"), ("rlmtgab", "RLMTGAB (Length of Stay)")],
             format_func=lambda x: x[1],
-            label_visibility="collapsed",
         )[0]
     with f_col2:
         map_year = st.selectbox(
-            "Select Year", options=year_list, index=len(year_list) - 1 if year_list else 0,
-            label_visibility="collapsed",
+            "Tahun", options=year_list, index=len(year_list) - 1 if year_list else 0,
         )
     with f_col3:
         map_month = st.selectbox(
-            "Select Month", options=month_list, format_func=month_name, label_visibility="collapsed"
+            "Bulan", options=month_list, format_func=month_name
         )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if map_indicator and map_year and map_month:
         prev_month = (map_month - 1) if map_month > 1 else 12
@@ -320,7 +316,7 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
             df_prev = df_infographic[(df_infographic["year"] == prev_year) & (df_infographic["month"] == prev_month)]
 
             period_label = f"{month_name(map_month)} {map_year}"
-            st.markdown(f'<div class="hero-title">Papua Regional Performance — {period_label}</div>', unsafe_allow_html=True)
+            st.markdown(f'<h2 class="hero-title">Papua Regional Performance — {period_label}</h2>', unsafe_allow_html=True)
 
             left_provs = LEFT_PROVINCES
             right_provs = RIGHT_PROVINCES
@@ -403,18 +399,22 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
     unit = meta["unit"].strip()
     prev_year = int(year) - 1
     sub = df_trend.copy()
-    sub["Bulan"] = sub["month"].apply(bulan)
+    short = lambda m: bulan(m)[:3]  # "Januari" -> "Jan", "Agustus" -> "Agu"
+    sub["Bulan"] = sub["month"].apply(short)
     sub["Tahun"] = sub["year"].astype(int).astype(str)
     sub["_bln"] = sub["month"].astype(int)
 
     cur_months = sub.loc[sub["Tahun"] == str(year), "_bln"]
     target_month = int(month) if month else (int(cur_months.max()) if len(cur_months) else None)
+    # Stop the series at the selected month: no line into months after it.
+    if target_month is not None:
+        sub = sub[sub["_bln"] <= target_month]
 
     fig = px.line(
         sub, x="Bulan", y=indicator, color="Tahun", markers=True,
         custom_data=["_bln"],
         category_orders={
-            "Bulan": [bulan(m) for m in sorted(sub["month"].unique())],
+            "Bulan": [short(m) for m in sorted(sub["month"].unique())],
             "Tahun": [str(prev_year), str(year)],
         },
         color_discrete_map={str(prev_year): PREV_LINE, str(year): CUR_LINE},
@@ -481,7 +481,7 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
 # PAGE — REPORT
 # ============================================================
 def render_report(etl_engine, df_info, prov_list, year_list, month_list):
-    st.markdown('<div class="hero-title">Laporan &amp; Narasi AI</div>', unsafe_allow_html=True)
+    st.markdown('<h2 class="hero-title">Laporan &amp; Narasi AI</h2>', unsafe_allow_html=True)
     with st.container(border=True):
         r_col1, r_col2, r_col3 = st.columns(3)
         with r_col1:
@@ -511,22 +511,6 @@ def render_indesign_pariwisata(etl_engine, prov, thn, bln):
     periode per kelas sekaligus, sedangkan tabel di layar hanya menampilkan satu
     periode berjalan.
     """
-    # CSS injection to make dark button text clearly visible (white)
-    # Hanya tombol berlatar gelap/amber yang jadi putih. Tombol putih (sidebar,
-    # secondary, unduh) harus tetap tinta gelap — putih di atas putih hilang.
-    st.markdown("""
-        <style>
-        div[data-testid="stMain"] .stButton>button[kind="primary"],
-        div[data-testid="stMain"] .stButton>button[kind="primary"] * {
-            color: #FFFFFF !important;
-        }
-        div[data-testid="stDownloadButton"] button,
-        div[data-testid="stDownloadButton"] button * {
-            color: #0F172A !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
     bln_nama = bln if isinstance(bln, str) else bulan(int(bln))
     st.markdown("---")
     st.subheader("🎨 Isi Template InDesign (BRS)")
@@ -687,7 +671,7 @@ PARI_VAR_OPTIONS = [
 
 
 def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
-    st.markdown('<div class="hero-title">Admin: Ingesti Data ETL</div>', unsafe_allow_html=True)
+    st.markdown('<h2 class="hero-title">Admin: Ingesti Data ETL</h2>', unsafe_allow_html=True)
     # Pariwisata lives in one table (all_data) with kd_prov / year / month as the
     # natural key, so all three panels filter on those same three columns.
     table = etl_engine.general_table_name
