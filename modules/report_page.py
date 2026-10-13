@@ -906,6 +906,7 @@ def render_indesign_export(meta, all_collected_data):
                 qr_name=qr_up.name if qr_up is not None else None,
                 infografis_bytes=info_up.getvalue() if info_up is not None else None,
                 infografis_name=info_up.name if info_up is not None else None,
+                template_dir=DEFAULT_IDML_TEMPLATE.parent,
             )
             st.session_state['idml_result'] = (res, meta)
         except Exception as e:
@@ -928,6 +929,7 @@ def render_indesign_export(meta, all_collected_data):
             for w in res.warnings:
                 st.markdown(f"- {w}")
 
+@st.cache_data(ttl=300)
 def _available_years():
     """Years that actually have data, ascending. Mirrors the admin page's
     SELECT DISTINCT tahun pattern; both modalities are unioned because the report

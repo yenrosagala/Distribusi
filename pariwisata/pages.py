@@ -474,7 +474,8 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
         ),
         legend=dict(font=dict(size=13, color=INK), title_font=dict(size=13, color=INK)),
     )
-    st.plotly_chart(fig, width='stretch')
+    with st.container(key=f"chartframe_yoy_{indicator}_{jenis}"):
+        st.plotly_chart(fig, width='stretch')
 
 
 ## ============================================================
@@ -639,6 +640,7 @@ def _pari_delete_filter(prov, year, month):
 MONTH_MAP = {name: i for i, name in enumerate(MONTH_NAMES, start=1)}
 
 
+@st.cache_data
 def _get_kabupaten_list(prov=None):
     try:
         engine = get_engine()
@@ -658,10 +660,24 @@ ETL_ALL_DATA = "all_data"  # shared table
 
 
 @st.cache_data
-def _kabupaten_list_cached(prov=None):
-    """Distinct kabupaten, optionally for one province. Cached because the
-    kabupaten set changes rarely (ETL re-ingests are rare)."""
-    return _get_kabupaten_list(prov)
+def _load_series(_engine, table_name, prov_series, kab_series, var_list):
+    # ponytail: push aggregation to SQL (sum per period) to cut row count/IO.
+    # Cache keyed on (table, filters, vars) via @st.cache_data; upgrade path:
+    # if per-series grouping by entity is needed, extend SELECT/GROUP BY.
+    cols_needed = ["year", "month", "kd_prov", "kd_kab"] + list(var_list)
+    select_cols = ", ".join(f'"{c}"' if c in ("year", "month", "kd_prov", "kd_kab") else c for c in cols_needed)
+    query = f"SELECT {select_cols} FROM {table_name}"
+    conditions, params = [], {}
+    if prov_series != "SEMUA":
+        conditions.append("kd_prov = :prov")
+        params["prov"] = prov_series
+    if kab_series != "SEMUA":
+        conditions.append("kd_kab = :kab")
+        params["kab"] = kab_series
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    df = pd.read_sql(text(query), _engine, params=params)
+    return df
 
 
 PARI_VAR_OPTIONS = [
@@ -785,8 +801,6 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
             )
 
         where_clause, params_del = _pari_delete_filter(prov_del, year_del, month_del)
-        if not where_clause == "1=1":
-            pass
         try:
             count_result = pd.read_sql(
                 text(f"SELECT COUNT(*) as n FROM {table} WHERE {where_clause}"),
@@ -839,7 +853,7 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
         with s1:
             prov_series = st.selectbox("Provinsi", ["SEMUA"] + TARGET_PROVINCES, key="pari_series_prov")
         with s2:
-            kab_options = ["SEMUA"] + _kabupaten_list_cached(prov_series)
+            kab_options = ["SEMUA"] + _get_kabupaten_list(prov_series)
             # Reset kabupaten when the province changes so a now-invalid choice
             # from the previous province's list cannot stick.
             if st.session_state.get("pari_series_kab") not in kab_options:
@@ -859,28 +873,8 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
                 st.warning("⚠️ Pilih minimal satu variabel indikator.")
                 return
 
-            # ponytail: push aggregation to SQL (sum per period) to cut row count/IO;
-            # add cache key by filter+vars so identical renders avoid re-query.
-            # Upgrade path: if per-series grouping by entity needed later, extend SELECT/GROUP BY.
-            @st.cache_data
-            def _load_series(table_name, prov_series, kab_series, var_list):
-                cols_needed = ["year", "month", "kd_prov", "kd_kab"] + list(var_list)
-                select_cols = ", ".join(f'"{c}"' if c in ("year", "month", "kd_prov", "kd_kab") else c for c in cols_needed)
-                query = f"SELECT {select_cols} FROM {table_name}"
-                conditions, params = [], {}
-                if prov_series != "SEMUA":
-                    conditions.append("kd_prov = :prov")
-                    params["prov"] = prov_series
-                if kab_series != "SEMUA":
-                    conditions.append("kd_kab = :kab")
-                    params["kab"] = kab_series
-                if conditions:
-                    query += " WHERE " + " AND ".join(conditions)
-                df = pd.read_sql(text(query), etl_engine.engine, params=params)
-                return df
-
             try:
-                df = _load_series(table, prov_series, kab_series, tuple(var_series))
+                df = _load_series(etl_engine.engine, table, prov_series, kab_series, tuple(var_series))
             except Exception as e:
                 st.error(f"Gagal membaca data: {e}")
                 return
@@ -931,10 +925,37 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
                     category_orders={"periode": periode_order},
                     title=f"Tren {judul} — {wilayah_label}",
                     markers=True,
-                    template="plotly_white",
                 )
-                fig.update_layout(xaxis_title="Periode Waktu", yaxis_title="Nilai", legend_title="Indikator")
-                st.plotly_chart(fig, width="stretch")
+                # white-filled markers ringed in the series colour, matching the
+                # YoY chart, so each point reads against its own stroke
+                for tr in fig.data:
+                    tr.line = dict(width=3)
+                    tr.marker = dict(size=9, color="#FFFFFF",
+                                     line=dict(width=2.5, color=tr.line.color))
+                    tr.hovertemplate = (
+                        f"<b>{tr.name}</b><br>%{{x}}<br>%{{y:,.2f}}<extra></extra>"
+                    )
+                fig.update_layout(
+                    xaxis_title="Periode Waktu",
+                    yaxis_title="Nilai",
+                    legend_title_text="Indikator",
+                    legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center",
+                                font=dict(size=13, color=INK)),
+                )
+                plotly_theme(fig, height=440)
+                # same axis treatment as render_yoy_chart: automargin so the
+                # gutter fits long tick labels, explicit titles past WCAG AA
+                fig.update_layout(
+                    margin=dict(l=8, r=8, t=64, b=8),
+                    xaxis=dict(automargin=True, linecolor=AXIS_LINE, linewidth=1,
+                               tickfont=dict(size=13, color=TICK), title_standoff=14,
+                               title=dict(font=dict(size=14, color=INK))),
+                    yaxis=dict(automargin=True, linecolor=AXIS_LINE, linewidth=1,
+                               gridcolor=LINE, tickfont=dict(size=13, color=TICK),
+                               title_standoff=14, title=dict(font=dict(size=14, color=INK))),
+                )
+                with st.container(key=f"chartframe_series_{judul}_{wilayah_label}"):
+                    st.plotly_chart(fig, width="stretch")
             except Exception as e:
                 st.error(f"Gagal membuat grafik: {e}")
 

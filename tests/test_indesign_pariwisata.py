@@ -474,6 +474,30 @@ def test_sumbu_x_mulai_dari_bulan_pertama_yang_ada_datanya():
     assert n_sumbu["n"] == 3, f"sumbu X harus 3 bulan, dapat {n_sumbu['n']}"
 
 
+def test_grafik_dua_seri_tahun_seperti_halaman():
+    """Grafik .idml harus sama dengan grafik halaman: dua garis (tahun lalu vs
+    tahun ini) dengan warna seri web, bukan satu garis biru tua."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    tren = [(2025, m, 40.0 + m) for m in range(1, 9)] + \
+           [(2026, m, 50.0 + m) for m in range(1, 9)]
+    warna = []
+    asli = plt.Axes.plot
+
+    def sadap(self, *a, **k):
+        warna.append(k.get("color"))
+        return asli(self, *a, **k)
+
+    plt.Axes.plot = sadap
+    try:
+        assert grafik_png(tren, "tpk", "TPK Series Hotel Bintang") is not None
+    finally:
+        plt.Axes.plot = asli
+    assert set(warna) == {"#70AD47", "#ED7D31"}, warna
+
+
 def test_grafik_tanpa_data_memberi_peringatan_bukan_diam_diam():
     """Frame yang gagal diisi harus disebut. Diam-diam meninggalkan frame menunjuk
     gambar template membuat hasil ekspor terlihat sama saja dengan yang berhasil."""
@@ -580,6 +604,26 @@ def test_infografis_jpeg_menautkan_link_pariwisata():
     assert info, "link Infografis tidak ada di spread"
     assert all(not u.startswith("file:") for u in info), f"link Infografis masih absolut: {info}"
     assert info[0].endswith(".jpeg"), info
+
+
+def test_gambar_links_template_ditanam_dan_relatif():
+    """Foto/logo dekoratif template (jembatan, stadion, plt kepala) ikut ditanam ke
+    dalam .idml dan tautannya jadi relatif, jadi tidak missing link di mesin lain.
+    Aset grafik/QR/infografis TIDAK ditanam buta (lihat _DATA_ASSET_TOKENS)."""
+    z = _zip(_isi())
+    uri = _link_uri(z)
+    di_paket = {n.rsplit("/", 1)[-1] for n in z.namelist() if n.startswith("Links/")}
+    # foto dekoratif template benar-benar tertanam & tertaut relatif
+    dekoratif = [n for n in di_paket
+                 if n.lower().startswith(("jembatan", "stadion", "shutterstock", "plt kepala"))]
+    assert dekoratif, f"foto dekoratif tidak ikut ditanam: {sorted(di_paket)}"
+    tertaut = {}
+    for u in uri:
+        tertaut.setdefault(u.rsplit("/", 1)[-1], u)
+    for n in dekoratif:
+        assert n in tertaut, f"{n} ditanam tapi tidak ada <Link> ke arahnya"
+        assert not tertaut[n].lower().startswith("file:"), \
+            f"{n} masih tertaut absolut: {tertaut[n]}"
 
 
 if __name__ == "__main__":

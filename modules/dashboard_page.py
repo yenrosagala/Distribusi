@@ -9,7 +9,8 @@ from sqlalchemy import text
 from google import genai
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
 from modules.ai_backup import openrouter_generate
-from modules.report_page import format_id_number, _arah_dinamis, get_gemini_api_keys, normalize_narrative, italicize_english
+from modules.report_page import (format_id_number, _arah_dinamis, get_gemini_api_keys,
+                                 normalize_narrative, italicize_english, MONTH_MAP, INV_MONTH_MAP)
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -19,9 +20,6 @@ if not logger.handlers:
 # ==============================================================================
 # HELPER MANDIRI
 # ==============================================================================
-MONTH_MAP = {'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6,
-             'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12}
-INV_MONTH_MAP = {v: k for k, v in MONTH_MAP.items()}
 MONTH_ABBR = {'Januari': 'Jan', 'Februari': 'Feb', 'Maret': 'Mar', 'April': 'Apr', 'Mei': 'Mei', 'Juni': 'Jun',
               'Juli': 'Jul', 'Agustus': 'Agt', 'September': 'Sep', 'Oktober': 'Okt', 'November': 'Nov', 'Desember': 'Des'}
 
@@ -124,7 +122,7 @@ def build_growth_table(df_curr, df_prev, cols, labels, periode_label):
 
 def style_growth_table(df, header_color):
     def fmt(v):
-        return "" if pd.isna(v) else f"{v:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
+        return "" if pd.isna(v) else format_id_number(v, decimals=2)
 
     styler = df.style.format(fmt).background_gradient(cmap='RdYlGn', axis=None, vmin=-30, vmax=30)
     # 'th' mencakup header kolom DAN nama baris (row_heading) -> keduanya hitam.
@@ -380,7 +378,7 @@ def _slide_title(slide, text):
 def _add_pptx_table(slide, df, left, top, width, height):
     """Tabel dengan format sel sama persis dengan gaya web growth table."""
     def fmt(v):
-        return "" if pd.isna(v) else f"{v:,.2f}".replace(",", "§").replace(".", ",").replace("§", ".")
+        return "" if pd.isna(v) else format_id_number(v, decimals=2)
 
     rows, cols = df.shape
     gf = slide.shapes.add_table(rows + 1, cols + 1, left, top, width, height)

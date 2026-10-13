@@ -31,6 +31,7 @@ from modules.indesign_export import (
     ExportResult,
     _dump,
     _embed_image,
+    _link_images_relative,
     _parse,
     _prev_period,
     _segments,
@@ -203,53 +204,93 @@ def _total_resmi(rows, ref, jenis, ind, periode):
 
 
 def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
-    """PNG garis tren untuk satu frame grafik di template.
+    """PNG grafik tren untuk satu frame di template.
 
-    Tanpa judul: judul grafik sudah menjadi frame teks tersendiri di template
-    (JUDUL_GRAFIK), jadi mengulanginya di dalam gambar akan tercetak dua kali.
-    Sumbu Y memakai satuan BPS, dan bulan tanpa data memutus garis (NaN), bukan 0.
+    Disamakan dengan grafik halaman web (``render_yoy_chart``): dua garis per
+    tahun (tahun lalu vs tahun ini), warna seri identik, penanda berlubang, dan
+    legenda "Tahun". Judul tidak digambar — frame JUDUL_GRAFIK di template sudah
+    memuatnya, jadi mengulanginya akan tercetak dua kali.
 
-    Sumbu X dipangkas mulai bulan pertama yang punya data. all_data belum terisi
-    penuh (hanya beberapa bulan terakhir), jadi sumbu Jan(tahun-1)..bulan berjalan
-    akan membuat garis terjepit di pojok kanan dan grafik terbaca kosong.
-    Celah di tengah rentang yang terpangkas tetap ditampilkan sebagai jeda.
+    Sumbu X hanya memuat bulan yang punya data (all_data belum terisi penuh),
+    dihentikan di bulan berjalan, sama seperti halaman. Bulan tanpa angka di
+    tengah rentang tetap jadi celah (NaN), bukan 0. Sumbu Y memakai satuan BPS.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    from matplotlib.ticker import FuncFormatter
 
     tren = list(tren or [])
-    isi = [i for i, (_, _, v) in enumerate(tren) if not pd.isna(v)]
-    if not isi:
+    if not tren:
         return None
-    tren = tren[isi[0]:]
-    # Periode kosong di tengah tetap jadi titik sumbu X supaya celah data terlihat
-    # sebagai jeda waktu dan bukan bulan yang hilang.
-    label = [f"{ABBR[BULAN[m - 1]]} {t % 100}" for t, m, _ in tren]
-    nilai = [v for _, _, v in tren]
-    x = list(range(len(tren)))
-    akhir = max(i for i, v in enumerate(nilai) if not pd.isna(v))
+    # Pisah per tahun; dua seri ditumpuk pada sumbu bulan yang sama, seperti web.
+    seri = {}
+    for t, m, v in tren:
+        seri.setdefault(int(t), {})[int(m)] = v
+    tahun = sorted(seri)
+    # Warna seri = PREV_LINE/CUR_LINE dan label = CUR/PREV_LABEL di pages.py.
+    warna = ({tahun[-2]: "#70AD47", tahun[-1]: "#ED7D31"} if len(tahun) > 1
+             else {tahun[-1]: "#ED7D31"})
+    label_warna = ({tahun[-2]: "#166534", tahun[-1]: "#92400E"} if len(tahun) > 1
+                   else {tahun[-1]: "#92400E"})
+
+    ada = sorted(m for d in seri.values() for m, v in d.items() if not pd.isna(v))
+    if not ada:
+        return None
+    bulan = list(range(min(ada), max(ada) + 1))
+    # Berhenti di bulan berjalan tahun ini, sama seperti halaman (tahun lalu tidak
+    # dipanjangkan sampai Desember kalau tahun ini baru sampai Agustus).
+    m_ini = max((m for m, v in seri[tahun[-1]].items() if not pd.isna(v)), default=None)
+    if m_ini is not None:
+        bulan = [m for m in bulan if m <= m_ini]
+    x = list(range(len(bulan)))
+    # Abreviasi 3 huruf yang sama dengan halaman (bulan(m)[:3]).
+    label = [BULAN[m - 1][:3] for m in bulan]
 
     tinggi = lebar_px / RASIO_GRAFIK[token]
     fig, ax = plt.subplots(figsize=(lebar_px / dpi, tinggi / dpi), dpi=dpi)
-    ax.plot(x, nilai, color="#1F4E79", linewidth=2.0, marker="o", markersize=4.5,
-            markerfacecolor="white", markeredgewidth=1.6, zorder=3)
-    # bulan berjalan ditebalkan: titik terakhir adalah angka yang dipublikasikan
-    ax.plot([x[akhir]], [nilai[akhir]], color="#C00000", marker="o", markersize=8,
-            zorder=4)
-    ax.annotate(angka(nilai[akhir]), (x[akhir], nilai[akhir]),
-                textcoords="offset points", xytext=(-6, 10), ha="right",
-                fontsize=11, color="#C00000", fontweight="bold")
+    for th in tahun:
+        d = seri[th]
+        garis = [d.get(m, np.nan) for m in bulan]
+        ax.plot(x, garis, color=warna[th], linewidth=3.0, marker="o", markersize=7,
+                markerfacecolor="white", markeredgewidth=1.8,
+                markeredgecolor=warna[th], label=str(th), zorder=3)
+        # label nilai titik terakhir tiap tahun, seperti anotasi di halaman
+        akhir = max((i for i, v in enumerate(garis) if not pd.isna(v)), default=None)
+        if akhir is not None:
+            ax.annotate(fmt_id(garis[akhir]), (x[akhir], garis[akhir]),
+                        textcoords="offset points", xytext=(0, 9), ha="center",
+                        fontsize=11, fontweight="bold", color=label_warna[th],
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none",
+                                  alpha=0.85), zorder=4)
+
     ax.set_xticks(x)
-    ax.set_xticklabels(label, fontsize=10, color="#333333")
+    # bulan banyak -> miringkan label supaya tidak tumpang tindih
+    rotasi = 30 if len(x) > 7 else 0
+    ax.set_xticklabels(label, fontsize=10, color="#333333",
+                       rotation=rotasi, ha="right" if rotasi else "center")
+    ax.set_xlabel("Bulan", fontsize=11, color="#333333")
     ax.set_ylabel(f"{SINGKATAN[ind]} ({SATUAN[ind]})", fontsize=11, color="#333333")
+    # label sumbu Y gaya BPS: tanpa notasi ilmiah, desimal koma (40 / 55,90)
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda v, _: fmt_id(v, decimals=0 if float(v).is_integer() else 2)))
+    ax.tick_params(axis="y", labelsize=10, colors="#333333")
     ax.yaxis.grid(True, color="#D9D9D9", linewidth=0.8)
     ax.set_axisbelow(True)
     for sisi in ("top", "right"):
         ax.spines[sisi].set_visible(False)
     for sisi in ("left", "bottom"):
         ax.spines[sisi].set_color("#808080")
-    ax.margins(x=0.01, y=0.16)
+    # bingkai oranye mengelilingi seluruh gambar grafik (bukan area plot)
+    inset = 4.0 / lebar_px
+    fig.add_artist(Rectangle((inset, inset), 1 - 2 * inset, 1 - 2 * inset,
+                             transform=fig.transFigure, fill=False,
+                             edgecolor="#ED7D31", linewidth=2.5, clip_on=False,
+                             zorder=10))
+    ax.margins(x=0.02, y=0.18)
+    ax.legend(title="Tahun", loc="upper left", frameon=False, fontsize=10,
+              title_fontsize=10)
     fig.tight_layout(pad=0.6)
 
     buf = io.BytesIO()
@@ -747,6 +788,7 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
                      "Infografis", "Infografis", warnings)
     warnings.append("Setelah dibuka di InDesign, cek teks overset (tanda + merah) dan perataan "
                     "halaman; panjang narasi berbeda dari template.")
+    _link_images_relative(files, order, resolve_template(level).parent, warnings)
 
     for sid, root in roots.items():
         files[stories[sid]] = _dump(root)

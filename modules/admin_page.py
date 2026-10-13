@@ -8,6 +8,7 @@ import streamlit as st
 from modules.config import PEMETAAN_WILAYAH, load_project_env
 from modules.database import delete_db, get_engine
 from modules.etl_engine import detect_file_metadata, parse_transport_file
+from modules.report_page import MONTH_MAP
 
 ADMIN_PASSWORD_ENV = "ADMIN_PASSWORD"
 
@@ -22,20 +23,6 @@ def _admin_password():
     load_project_env()
     return os.getenv(ADMIN_PASSWORD_ENV) or None
 
-MONTH_MAP = {
-    "Januari": 1,
-    "Februari": 2,
-    "Maret": 3,
-    "April": 4,
-    "Mei": 5,
-    "Juni": 6,
-    "Juli": 7,
-    "Agustus": 8,
-    "September": 9,
-    "Oktober": 10,
-    "November": 11,
-    "Desember": 12,
-}
 MONTH_LIST = list(MONTH_MAP.keys())
 
 
@@ -582,20 +569,7 @@ def show_series_admin_page():
     with c_e3:
       month_edit = st.selectbox(
           "Bulan Periode",
-          [
-              "Januari",
-              "Februari",
-              "Maret",
-              "April",
-              "Mei",
-              "Juni",
-              "Juli",
-              "Agustus",
-              "September",
-              "Oktober",
-              "November",
-              "Desember",
-          ],
+          MONTH_LIST,
           key="edit_month",
       )
 

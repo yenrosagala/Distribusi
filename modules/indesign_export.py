@@ -618,6 +618,85 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
     return patched > 0
 
 
+# Aset bermuatan data di Links/ (grafik, QR, infografis) tidak ikut ditanam buta;
+# hanya _embed_image yang boleh menaruhnya, saat ada data/unggahan.
+_DATA_ASSET_TOKENS = ("infografis", "qrcode", "series hotel")
+
+
+def _link_images_relative(files, order, template_dir, warnings):
+    """Tanam gambar folder ``Links/`` template ke dalam paket & jadikan setiap
+    <Link> gambar relatif 'Links/<nama>'.
+
+    Template menautkan foto, logo, dan grafik bawaan ke path absolut
+    'file:D:/BPS/.../Links/...', jadi di mesin lain semua itu missing link walau
+    folder Links/ ikut terkirim. Setelah ini .idml mandiri: gambarnya ada di dalam
+    paket dan menunjuk relatif, sehingga InDesign menemukannya lewat folder Links/
+    di sebelah .idml.
+
+    Aset bermuatan data (grafik, QR, infografis) DIKECUALIKAN: aset itu hanya boleh
+    masuk lewat _embed_image saat ada data/unggahan. Kalau tidak ada, frame-nya
+    dibiarkan menunjuk template (missing) daripada menampilkan angka lama seolah
+    angka periode ini.
+    """
+    if not template_dir:
+        return 0
+    links_dir = Path(template_dir) / "Links"
+    fmt_of = {".jpg": b'$ID/JPEG', ".jpeg": b'$ID/JPEG',
+              ".png": b'$ID/Portable Network Graphics (PNG)'}
+    tag_re = re.compile(rb"<Link\b[^>]*?/>")
+    spread_xml = [n for n in files
+                  if n.startswith(("Spreads/", "MasterSpreads/")) and n.endswith(".xml")]
+
+    dirujuk = set()
+    for nm in spread_xml:
+        for tag in tag_re.finditer(files[nm]):
+            uri = re.search(r'LinkResourceURI="([^"]*)"',
+                            tag.group(0).decode("utf-8", "replace"))
+            if uri:
+                dirujuk.add(unquote(uri.group(1)).rsplit("/", 1)[-1])
+
+    tersedia, ditanam = {}, 0
+    if links_dir.is_dir():
+        for f in sorted(links_dir.iterdir()):
+            if f.name not in dirujuk or f.suffix.lower() not in fmt_of:
+                continue
+            if any(p in f.name.lower() for p in _DATA_ASSET_TOKENS):
+                continue
+            arc = f"Links/{f.name}"
+            tersedia[f.name] = arc
+            if arc not in files:
+                files[arc] = f.read_bytes()
+                if arc not in order:
+                    order.append(arc)
+                ditanam += 1
+
+    def repl(m):
+        tag = m.group(0)
+        uri = re.search(r'LinkResourceURI="([^"]*)"', tag.decode("utf-8", "replace"))
+        if not uri:
+            return tag
+        base = unquote(uri.group(1)).rsplit("/", 1)[-1]
+        arc = tersedia.get(base)
+        if arc is None:
+            return tag
+        uri_baru = quote(arc, safe="/")
+        if uri.group(1) == uri_baru:
+            return tag
+        tag = re.sub(rb'LinkResourceURI="[^"]*"',
+                     b'LinkResourceURI="' + uri_baru.encode() + b'"', tag)
+        return re.sub(rb'LinkResourceFormat="[^"]*"',
+                      b'LinkResourceFormat="' + fmt_of[Path(base).suffix.lower()] + b'"', tag)
+
+    for nm in spread_xml:
+        blob = files[nm]
+        if b"LinkResourceURI" not in blob:
+            continue
+        baru = tag_re.sub(repl, blob)
+        if baru != blob:
+            files[nm] = baru
+    return ditanam
+
+
 def paket_zip(idml_bytes, nama_idml, template_dir=None):
     """ZIP paket InDesign: .idml + seluruh aset folder template.
 
@@ -649,9 +728,9 @@ def paket_zip(idml_bytes, nama_idml, template_dir=None):
 
 def fill_brs_template(template_bytes, prov, thn, bln, items, kab_lookup,
                       nomor_brs=None, tanggal_rilis=None, laut_ports=None,
-                      qr_bytes=None, qr_name=None,
+                       qr_bytes=None, qr_name=None,
                        infografis_bytes=None, infografis_name=None,
-                       prev_bln=None, prev_thn=None):
+                       prev_bln=None, prev_thn=None, template_dir=None):
     """
     items: list dict dari prepare_table_item(), masing-masing berisi juga
            'p1' & 'p2' (narasi) dan 'row_col'. Diindeks (moda, col_target).
@@ -831,6 +910,9 @@ def fill_brs_template(template_bytes, prov, thn, bln, items, kab_lookup,
                     "ganti file gambar & keterangan \"Gambar 1\" secara manual.")
     warnings.append("Setelah dibuka di InDesign, cek teks overset (tanda + merah) dan perataan halaman; "
                     "panjang narasi berbeda dari template.")
+
+    # 5b) tanam gambar Links/ template & jadikan tautannya relatif (mandiri)
+    _link_images_relative(files, order, template_dir, warnings)
 
     # 6) tulis ulang zip
     for sid, r in roots.items():

@@ -368,3 +368,11 @@ hr{ border-color: var(--line) !important; }
     max-width: 100%;
 }
 
+/* ---------- orange frame around the trend charts (whole chart image) ---------- */
+[class*="st-key-chartframe_yoy"],
+[class*="st-key-chartframe_series"]{
+    border: 1.5px solid #ED7D31;
+    border-radius: 12px;
+    padding: 10px;
+}
+
