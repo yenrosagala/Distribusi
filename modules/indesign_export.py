@@ -49,6 +49,13 @@ ABBR = {
     "September": "Sep", "Oktober": "Okt", "November": "Nov", "Desember": "Des",
 }
 
+# YoY chart tokens, shared so the web chart (pariwisata/pages.py) and the .idml
+# chart (modules/indesign_pariwisata.py) cannot drift. Markers are white-filled
+# with a ring in the line colour; data labels are darkened shades that stay
+# >= 4.5:1 on white.
+CUR_LINE, PREV_LINE = "#ED7D31", "#70AD47"
+CUR_LABEL, PREV_LABEL = "#92400E", "#166534"
+
 # story tabel -> (moda, kolom data di DB, judul tabel, satuan, desimal, label kolom-1)
 TABLE_STORIES = {
     "ud48": ("laut",  "dn_penumpang_naik",     "Perkembangan Penumpang Berangkat Angkutan Laut Dalam Negeri", "Orang", 0),

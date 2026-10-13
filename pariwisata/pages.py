@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from modules.database import is_local_dummy_db, get_engine
 from modules.etl_engine import MONTH_NAMES
-from modules.indesign_export import paket_zip
+from modules.indesign_export import paket_zip, CUR_LINE, PREV_LINE, CUR_LABEL, PREV_LABEL
 from modules.indesign_pariwisata import (
     fill_brs_pariwisata_template,
     kumpulkan_kelas,
@@ -28,12 +28,9 @@ INK, INK_DIM, LINE, MAP_BG = "#0F172A", "#64748B", "#E2E8F0", "#0B0F14"
 # Axis chrome: tick text sits at #334155 and titles at INK so neither relies on
 # INK_DIM, which is only 4.8:1 on white and reads as grey-on-grey at 13px.
 TICK, AXIS_LINE = "#334155", "#CBD5E1"
-# YoY series colours. Markers are white-filled with a ring in the line colour so
-# each point reads against its own line regardless of how light the line is.
-CUR_LINE, PREV_LINE = "#ED7D31", "#70AD47"
-# Data labels are darkened shades of their line, so they stay >= 4.5:1 on white
-# (the raw line colours are only ~2.5:1 and would be illegible as text).
-CUR_LABEL, PREV_LABEL = "#92400E", "#166534"
+# YoY series colours and data-label colours are defined in modules/indesign_export.py
+# (CUR_LINE/PREV_LINE/CUR_LABEL/PREV_LABEL) so the web chart and the .idml chart
+# share one source and cannot drift.
 
 TARGET_PROVINCES = ["Papua", "Papua Tengah", "Papua Pegunungan", "Papua Selatan"]
 LEFT_PROVINCES = ["Papua Tengah", "Papua Selatan"]

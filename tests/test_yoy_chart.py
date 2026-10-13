@@ -18,6 +18,7 @@ Run directly:  python tests/test_yoy_chart.py
 Or with pytest: pytest tests/test_yoy_chart.py
 """
 import importlib
+import contextlib
 import os
 import sys
 
@@ -45,6 +46,11 @@ class Stub:
         return lambda fn: fn
 
     cache_resource = cache_data
+
+    def container(self, *a, **k):
+        # render_yoy_chart wraps the chart in `with st.container(key=...)`; a
+        # context manager is all this stub needs to return.
+        return contextlib.nullcontext()
 
     def __getattr__(self, name):
         return lambda *a, **k: None

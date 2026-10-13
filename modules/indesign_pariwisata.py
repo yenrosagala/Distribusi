@@ -28,7 +28,11 @@ from sqlalchemy import text
 
 from modules.indesign_export import (
     ABBR,
+    CUR_LABEL,
+    CUR_LINE,
     ExportResult,
+    PREV_LABEL,
+    PREV_LINE,
     _dump,
     _embed_image,
     _link_images_relative,
@@ -229,11 +233,12 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
     for t, m, v in tren:
         seri.setdefault(int(t), {})[int(m)] = v
     tahun = sorted(seri)
-    # Warna seri = PREV_LINE/CUR_LINE dan label = CUR/PREV_LABEL di pages.py.
-    warna = ({tahun[-2]: "#70AD47", tahun[-1]: "#ED7D31"} if len(tahun) > 1
-             else {tahun[-1]: "#ED7D31"})
-    label_warna = ({tahun[-2]: "#166534", tahun[-1]: "#92400E"} if len(tahun) > 1
-                   else {tahun[-1]: "#92400E"})
+    # Warna seri/label = PREV_LINE/CUR_LINE dan PREV_LABEL/CUR_LABEL di
+    # indesign_export.py, dipakai bersama grafik web (pariwisata/pages.py).
+    warna = ({tahun[-2]: PREV_LINE, tahun[-1]: CUR_LINE} if len(tahun) > 1
+             else {tahun[-1]: CUR_LINE})
+    label_warna = ({tahun[-2]: PREV_LABEL, tahun[-1]: CUR_LABEL} if len(tahun) > 1
+                   else {tahun[-1]: CUR_LABEL})
 
     ada = sorted(m for d in seri.values() for m, v in d.items() if not pd.isna(v))
     if not ada:
@@ -256,11 +261,16 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
         ax.plot(x, garis, color=warna[th], linewidth=3.0, marker="o", markersize=7,
                 markerfacecolor="white", markeredgewidth=1.8,
                 markeredgecolor=warna[th], label=str(th), zorder=3)
-        # label nilai titik terakhir tiap tahun, seperti anotasi di halaman
-        akhir = max((i for i, v in enumerate(garis) if not pd.isna(v)), default=None)
-        if akhir is not None:
-            ax.annotate(fmt_id(garis[akhir]), (x[akhir], garis[akhir]),
-                        textcoords="offset points", xytext=(0, 9), ha="center",
+        # label nilai titik bulan berjalan saja, seperti anotasi di halaman:
+        # tahun ini ke atas, tahun lalu ke bawah supaya pasangan tidak menumpuk
+        i_ini = len(bulan) - 1
+        nilai_ini = garis[i_ini]
+        if not pd.isna(nilai_ini):
+            atas = th == tahun[-1]
+            ax.annotate(fmt_id(nilai_ini), (x[i_ini], nilai_ini),
+                        textcoords="offset points",
+                        xytext=(0, 9 if atas else -14),
+                        ha="center", va="bottom" if atas else "top",
                         fontsize=11, fontweight="bold", color=label_warna[th],
                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none",
                                   alpha=0.85), zorder=4)
