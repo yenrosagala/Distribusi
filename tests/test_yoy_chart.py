@@ -107,7 +107,7 @@ def test_label_text_is_the_value():
     fig = _render(month=6)
     juni = _month_index(fig, "Jun")
     tr = _by_year(fig)[str(YEAR)]
-    assert str(tr.text[juni]).replace(",", "") == f"{tr.y[juni]:.2f}"
+    assert str(tr.text[juni]) == pages.id_number(tr.y[juni])
 
 
 def test_month_none_falls_back_to_latest_available_month():
@@ -121,12 +121,88 @@ def test_month_none_falls_back_to_latest_available_month():
 def test_hover_uses_human_label_not_column_name():
     fig = _render(month=6)
     for tr in fig.data:
+        if tr.type != "scatter":
+            continue
         assert "Tingkat Penghunian Kamar (TPK)" in tr.hovertemplate, tr.hovertemplate
         assert "tpk=" not in tr.hovertemplate, tr.hovertemplate
 
 
 def test_no_undefined_anywhere_in_the_figure():
     assert "undefined" not in _render(month=6).to_json().lower()
+
+
+def _grid_table(fig):
+    """The bordered value table drawn below the chart."""
+    return next(tr for tr in fig.data if tr.type == "table")
+
+
+def _grid_rows(fig):
+    """(months, years, {year: {month: text}}) read back from the value table."""
+    t = _grid_table(fig)
+    bulan = list(t.header.values)[1:]
+    kolom = list(t.cells.values)
+    tahun = list(kolom[0])
+    isi = {th: {} for th in tahun}
+    for i, b in enumerate(bulan):
+        for th, teks in zip(tahun, kolom[i + 1]):
+            isi[th][b] = teks
+    return bulan, tahun, isi
+
+
+def test_value_grid_lists_every_month_for_each_year():
+    """Below the chart: one row per year, one cell per month, holding the same
+    figures the line series carries."""
+    fig = _render(month=6)
+    bulan = list(fig.data[0].x)
+    set_bulan, tahun, isi = _grid_rows(fig)
+    assert set_bulan == bulan
+    assert tahun == [tr.name for tr in fig.data if tr.type == "scatter"]
+    for th in tahun:
+        for b, v in zip(fig.data[0].x, _by_year(fig)[th].y):
+            harap = "" if pd.isna(v) else pages.id_number(v)
+            assert isi[th][b] == harap, (th, b)
+
+
+def test_value_grid_has_cell_borders():
+    """A table, not floating text: cells must carry a visible border line."""
+    t = _grid_table(_render(month=6))
+    assert t.cells.line.color and t.cells.line.width >= 1
+    assert t.header.line.color == t.cells.line.color
+
+
+def test_value_grid_labels_each_year_row():
+    _, tahun, _ = _grid_rows(_render(month=6))
+    assert tahun == [str(YEAR - 1), str(YEAR)]
+
+
+def test_numbers_use_indonesian_format():
+    """Point thousands, comma decimal — in the labels, the table and the hover."""
+    assert pages.id_number(1234.5) == "1.234,50"
+    fig = _render(month=6)
+    _, tahun, isi = _grid_rows(fig)
+    for th in tahun:
+        for cell in isi[th].values():
+            if cell:
+                assert "," in cell, cell          # comma decimal, not a dot
+                assert "." not in cell, cell       # values here are < 1000
+    tr = _by_year(fig)[str(YEAR)]
+    assert str(tr.text[_month_index(fig, "Jun")]).count(",") == 1
+    for t in fig.data:
+        if t.type == "scatter":
+            assert "%{customdata[1]}" in t.hovertemplate
+            assert ",.2f" not in t.hovertemplate   # no US d3 format left
+
+
+def test_y_axis_title_is_compact():
+    """A long rotated title overflowed the plot row and overlapped the table.
+
+    The axis now carries the short acronym (the full name stays in the hover and
+    the table header), so the title fits its own plot row.
+    """
+    fig = _render(month=6)
+    assert fig.layout.yaxis.title.text == "TPK (%)"
+    assert len(fig.layout.yaxis.title.text) <= 20
+
 
 
 def test_axis_titles_are_not_clipped():
@@ -158,16 +234,44 @@ def test_axis_text_meets_wcag_aa():
 
     Regression: `axis.color` also paints the axis *title*, so setting it to
     INK_DIM pushed the title to 4.8:1 at 13px and it read as grey on grey. Each
-    now carries its own font, and this asserts the measured ratios.
+    now carries its own font, and this asserts the measured ratios. The x-axis
+    has no title any more (month names live in the table header), so only its
+    ticks are checked there.
     """
     fig = _render(month=6)
+    assert _contrast(fig.layout.xaxis.tickfont.color) >= 4.5
     for axis in ("xaxis", "yaxis"):
         spec = fig.layout[axis]
         assert _contrast(spec.tickfont.color) >= 4.5, (axis, spec.tickfont.color)
-        assert _contrast(spec.title.font.color) >= 4.5, (axis, spec.title.font.color)
+    assert not (fig.layout.xaxis.title.text or "").strip(), "x-axis title must be gone"
+    assert _contrast(fig.layout.yaxis.title.font.color) >= 4.5
     # and the title must be visually distinct from the ticks, not just legal
     assert fig.layout.yaxis.title.font.color != fig.layout.yaxis.tickfont.color
     assert fig.layout.yaxis.title.font.size >= 14
+
+
+def test_year_column_and_months_align_with_the_plot():
+    """The "Tahun" column sits in the y-axis gutter and the month columns sit
+    under their own month points.
+
+    Layout: the table spans the full plot width; its first column takes
+    ``YOY_LABEL_W`` and the remaining ``1 - YOY_LABEL_W`` is split evenly across
+    the months. The chart's x-axis is inset by the same ``YOY_LABEL_W`` so
+    category *i* lands on month column *i*.
+    """
+    fig = _render(month=6)
+    w = pages.YOY_LABEL_W
+    tbl = _grid_table(fig)
+    bulan = list(tbl.header.values)[1:]
+    lebar = list(tbl.columnwidth)
+    assert abs(lebar[0] - w) < 1e-9
+    assert len(lebar) == len(bulan) + 1
+    for col in lebar[1:]:
+        assert abs(col - (1 - w) / len(bulan)) < 1e-9
+    assert abs(sum(lebar) - 1) < 1e-9
+    assert abs(fig.layout.xaxis.domain[0] - w) < 1e-9
+    assert abs(fig.layout.xaxis.domain[1] - 1) < 1e-9
+
 
 
 CUR_LINE = "#ED7D31"
@@ -211,10 +315,14 @@ def test_marker_ring_matches_its_series():
 
 
 def test_data_labels_meet_wcag_aa():
-    """The two value labels sit on white too, so they get the same check."""
+    """The value labels and the table text sit on white, so they get checked too."""
     fig = _render(month=6)
     for tr in fig.data:
-        assert _contrast(tr.textfont.color) >= 4.5, (tr.name, tr.textfont.color)
+        if tr.type == "scatter":
+            assert _contrast(tr.textfont.color) >= 4.5, (tr.name, tr.textfont.color)
+    tabel = _grid_table(fig)
+    assert _contrast(tabel.cells.font.color) >= 4.5
+    assert _contrast(tabel.header.font.color) >= 4.5
 
 
 def test_legend_text_meets_wcag_aa():
@@ -226,10 +334,12 @@ def test_legend_text_meets_wcag_aa():
 def test_only_the_requested_accommodation_type_is_plotted():
     """Both types arrive in one frame; the chart must not merge them into one series.
 
-    Also the series stops at the selected month (June), not the full year.
+    The current year stops at the selected month (June); the previous year keeps
+    its full twelve months, since all of it is data already on record.
     """
     fig = _render(month=6)
-    assert len(fig.data[0].x) == 6
+    assert len(_by_year(fig)[str(YEAR)].x) == 6
+    assert len(_by_year(fig)[str(YEAR - 1)].x) == 12
     non_bintang = _render(month=6, jenis=NON_BINTANG)
     tpk_bintang = _by_year(fig)[str(YEAR)].y[0]
     tpk_non = _by_year(non_bintang)[str(YEAR)].y[0]

@@ -5,6 +5,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 from sqlalchemy import text
 
@@ -31,6 +33,10 @@ TICK, AXIS_LINE = "#334155", "#CBD5E1"
 # YoY series colours and data-label colours are defined in modules/indesign_export.py
 # (CUR_LINE/PREV_LINE/CUR_LABEL/PREV_LABEL) so the web chart and the .idml chart
 # share one source and cannot drift.
+# Lebar lajur "Tahun" pada tabel nilai grafik YoY, sebagai pecahan lebar plot.
+# Domain sumbu X digeser sekian supaya kolom bulan pas di bawah titik bulannya,
+# sementara lajur tahun duduk di kiri (lajur sumbu Y), bukan menelan satu kolom.
+YOY_LABEL_W = 0.13
 
 TARGET_PROVINCES = ["Papua", "Papua Tengah", "Papua Pegunungan", "Papua Selatan"]
 LEFT_PROVINCES = ["Papua Tengah", "Papua Selatan"]
@@ -80,8 +86,8 @@ def load_geodata():
 
 JENIS_LABELS = {"Hotel Bintang": "Klasifikasi Bintang", "Hotel Non Bintang": "Klasifikasi NonBintang"}
 INDICATOR_META = {
-    "tpk": {"label": "Tingkat Penghunian Kamar (TPK)", "unit": "%"},
-    "rlmtgab": {"label": "Rata-rata Lama Menginap (RLMT)", "unit": " malam"},
+    "tpk": {"label": "Tingkat Penghunian Kamar (TPK)", "short": "TPK", "unit": "%"},
+    "rlmtgab": {"label": "Rata-rata Lama Menginap (RLMT)", "short": "RLMT", "unit": " malam"},
 }
 
 
@@ -118,6 +124,15 @@ def period_label(year, month):
 def prev_period(year, month):
     """The period immediately before (year, month)."""
     return (int(year), int(month) - 1) if int(month) > 1 else (int(year) - 1, 12)
+
+
+def id_number(v, decimals=2):
+    """1.234,56 — titik ribuan, koma desimal (format angka Indonesia).
+
+    Sama persis dengan modules/report_page.format_id_number, disalin lokal agar
+    halaman pariwisata tidak menarik impor berat (google-genai, docx) dari sana.
+    """
+    return f"{float(v):,.{decimals}f}".replace(",", "§").replace(".", ",").replace("§", ".")
 
 
 def periods_in(df_info, province=None):
@@ -383,8 +398,11 @@ def render_infographic_map(etl_engine, df_info, prov_list, year_list, month_list
 def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, height=380):
     """Month-by-month line for one indicator + accommodation type, current year vs the year before.
 
-    Labelled points: the selected month and the same month one year earlier, so the
-    year-over-year comparison is readable without hovering.
+    The current year stops at the selected month (no line into months that have not
+    happened yet); the previous year keeps every month it has, so all data already
+    on record is shown. Labelled points: the selected month and the same month one
+    year earlier. A bordered table under the chart lists every month's figure per
+    year (rows = Tahun, columns = Bulan).
     """
     if df_trend is None or df_trend.empty:
         return
@@ -400,16 +418,18 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
     sub["Bulan"] = sub["month"].apply(short)
     sub["Tahun"] = sub["year"].astype(int).astype(str)
     sub["_bln"] = sub["month"].astype(int)
+    sub["_fmt"] = ["" if pd.isna(v) else id_number(v) for v in sub[indicator]]
 
     cur_months = sub.loc[sub["Tahun"] == str(year), "_bln"]
     target_month = int(month) if month else (int(cur_months.max()) if len(cur_months) else None)
-    # Stop the series at the selected month: no line into months after it.
+    # Only the current year stops at the selected month — the previous year keeps
+    # every month it holds, since all of it is data already on record.
     if target_month is not None:
-        sub = sub[sub["_bln"] <= target_month]
+        sub = sub[(sub["Tahun"] != str(year)) | (sub["_bln"] <= target_month)]
 
     fig = px.line(
         sub, x="Bulan", y=indicator, color="Tahun", markers=True,
-        custom_data=["_bln"],
+        custom_data=["_bln", "_fmt"],
         category_orders={
             "Bulan": [short(m) for m in sorted(sub["month"].unique())],
             "Tahun": [str(prev_year), str(year)],
@@ -424,17 +444,19 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
         # white fill + a ring in the line colour: the point reads as its own
         # series while staying clearly separated from the stroke it sits on
         tr.marker = dict(size=9, color="#FFFFFF", line=dict(width=2.5, color=line_color))
-        # readable hover: use the human label, not the raw column name
+        # readable hover: human label + pre-formatted Indonesian number (Plotly's
+        # %{y:,.2f} would print the US 1,234.56 style regardless of locale)
         tr.hovertemplate = (
             f"<b>Tahun {tr.name}</b><br>"
-            f"%{{x}}<br>{meta['label']}: %{{y:,.2f}} {unit}<extra></extra>"
+            f"%{{x}}<br>{meta['label']}: %{{customdata[1]}} {unit}<extra></extra>"
         )
         if target_month is None:
             continue
         months = [c[0] for c in tr.customdata]
+        teks = [c[1] for c in tr.customdata]
         tr.text = [
-            f"{v:,.2f}" if int(m) == target_month and pd.notna(v) else ""
-            for m, v in zip(months, tr.y)
+            t if int(m) == target_month else ""
+            for m, t in zip(months, teks)
         ]
         tr.mode = "lines+markers+text"
         # label away from each other so the pair stays legible when they overlap
@@ -442,27 +464,55 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
         tr.textfont = dict(size=12, color=CUR_LABEL if is_cur else PREV_LABEL)
         tr.cliponaxis = False
 
+    # Nilai per bulan digambar sebagai tabel bergaris di bawah sumbu X. Kolom
+    # "Tahun" diparkir di lajur sumbu Y (kiri), lalu satu kolom per bulan. Supaya
+    # kolom bulan pas di bawah titik bulannya, domain sumbu X digeser sebesar lebar
+    # lajur tahun (YOY_LABEL_W): bulan lalu mengisi persis sisa lebar plot.
+    tahun_urut = [tr.name for tr in fig.data]
+    bulan_urut = [short(m) for m in sorted(sub["month"].unique())]
+    nilai = {(th, b): v for th, b, v in zip(sub["Tahun"], sub["Bulan"], sub[indicator])}
+    kolom = []
+    for b in bulan_urut:
+        kolom.append(["" if pd.isna(nilai.get((th, b), np.nan)) else id_number(nilai[(th, b)])
+                      for th in tahun_urut])
+    aligns = ["left"] + ["center"] * len(bulan_urut)
+    tabel = go.Table(
+        header=dict(values=["Tahun"] + bulan_urut, align=aligns,
+                    fill_color="#FFFFFF", line=dict(color=LINE, width=1),
+                    font=dict(color=INK, size=13)),
+        cells=dict(values=[[th for th in tahun_urut]] + kolom,
+                   align=aligns, height=26, fill_color="#FFFFFF",
+                   line=dict(color=LINE, width=1), font=dict(color=TICK, size=12)),
+        columnwidth=[YOY_LABEL_W] + [(1 - YOY_LABEL_W) / len(bulan_urut)] * len(bulan_urut),
+    )
+    garis = fig  # px.line figure carrying the two decorated series
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.66, 0.34],
+                        vertical_spacing=0.04,
+                        specs=[[{"type": "xy"}], [{"type": "table"}]])
+    for tr in garis.data:
+        fig.add_trace(tr, row=1, col=1)
+    fig.add_trace(tabel, row=2, col=1)
+    # chart plot area starts where the month columns start, so the two line up
+    fig.update_xaxes(domain=[YOY_LABEL_W, 1], row=1, col=1)
+
     fig.update_layout(
-        xaxis_title="Bulan",
-        yaxis_title=f"{meta['label']} ({unit})",
+        yaxis_title=f"{meta['short']} ({unit})",
         font=dict(family="Inter, sans-serif", color=INK, size=13),
         xaxis=dict(showgrid=False),
         yaxis=dict(showgrid=True, gridcolor=LINE),
         legend_title_text="Tahun",
     )
     plotly_theme(fig, height=height)
-    # plotly_theme pins a 10px left margin, which clips the y-axis title and tick
-    # labels; automargin lets plotly size the gutter to the real label width.
-    #
-    # Plotly's `axis.color` also paints the axis *title*, so leaving the title at
-    # INK_DIM made it the same weight as the ticks and near-illegible at 13px.
-    # Titles and ticks therefore get their own font, both well past WCAG AA.
+    # The month names now live in the table header, so the x-axis carries no title.
+    # Plotly's `axis.color` also paints the axis *title*, so leaving the y title at
+    # INK_DIM made it the same weight as the ticks and near-illegible at 13px;
+    # title and ticks therefore get their own font, both well past WCAG AA.
     fig.update_layout(
-        margin=dict(l=8, r=8, t=56, b=8),
+        margin=dict(l=8, r=8, t=56, b=98),
         xaxis=dict(
-            automargin=True, linecolor=AXIS_LINE, linewidth=1,
+            automargin=True, showticklabels=False,
+            linecolor=AXIS_LINE, linewidth=1,
             tickfont=dict(size=13, color=TICK), title_standoff=14,
-            title=dict(font=dict(size=14, color=INK)),
         ),
         yaxis=dict(
             automargin=True, linecolor=AXIS_LINE, linewidth=1,
@@ -913,30 +963,28 @@ def render_admin_etl(etl_engine, df_info, prov_list, year_list, month_list):
 
             judul = ", ".join(v.replace("_", " ").title() for v in var_series)
 
+            seri_order = [v.replace("_", " ").title() for v in var_series]
+
             try:
-                fig = px.line(
+                fig = px.bar(
                     df_long,
-                    x="periode",
+                    x="seri",
                     y="nilai",
-                    color="seri",
-                    category_orders={"periode": periode_order},
+                    color="periode",
+                    barmode="group",
+                    category_orders={"seri": seri_order, "periode": periode_order},
                     title=f"Tren {judul} — {wilayah_label}",
-                    markers=True,
                 )
-                # white-filled markers ringed in the series colour, matching the
-                # YoY chart, so each point reads against its own stroke
-                for tr in fig.data:
-                    tr.line = dict(width=3)
-                    tr.marker = dict(size=9, color="#FFFFFF",
-                                     line=dict(width=2.5, color=tr.line.color))
-                    tr.hovertemplate = (
-                        f"<b>{tr.name}</b><br>%{{x}}<br>%{{y:,.2f}}<extra></extra>"
-                    )
+                # X = indikator, satu batang per periode (periode jadi seri
+                # berwarna) sehingga kolom tabel seri terbaca langsung di sumbu X.
+                fig.update_traces(
+                    hovertemplate="<b>%{x}</b><br>%{fullData.name}<br>%{y:,.2f}<extra></extra>"
+                )
                 fig.update_layout(
-                    xaxis_title="Periode Waktu",
+                    xaxis_title="Indikator",
                     yaxis_title="Nilai",
-                    legend_title_text="Indikator",
-                    legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center",
+                    legend_title_text="Periode",
+                    legend=dict(orientation="h", y=-0.28, x=0.5, xanchor="center",
                                 font=dict(size=13, color=INK)),
                 )
                 plotly_theme(fig, height=440)

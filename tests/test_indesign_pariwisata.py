@@ -448,30 +448,35 @@ def test_semua_judul_grafik_tertulis():
 
 
 def test_sumbu_x_mulai_dari_bulan_pertama_yang_ada_datanya():
-    """all_data baru terisi beberapa bulan terakhir. Kalau sumbu X tetap dimulai
-    Jan(tahun-1), garis terjepit di pojok kanan dan grafik terbaca kosong."""
-    tren = [(2025, m, None) for m in range(1, 13)] + \
-           [(2026, m, 40 + m) for m in (4, 5, 6)]
-    assert grafik_png(tren, "tpk", "TPK Series Hotel Bintang") is not None
-
-    # Zahl titik sumbu X = jumlah bulan sejak data pertama, bukan 18.
+    """all_data baru terisi beberapa bulan terakhir. Kalau deret tetap dimulai
+    Jan(tahun-1), garis terjepit di pojok kanan dan grafik terbaca kosong. Nama
+    bulan pindah ke header tabel, jadi tick sumbu X harus dikosongkan."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    n_sumbu = {}
-    asli = plt.Axes.set_xticks
+    tren = [(2025, m, None) for m in range(1, 13)] + \
+           [(2026, m, 40 + m) for m in (4, 5, 6)]
+    assert grafik_png(tren, "tpk", "TPK Series Hotel Bintang") is not None
 
-    def sadap(self, ticks, *a, **k):
-        n_sumbu["n"] = len(ticks)
-        return asli(self, ticks, *a, **k)
+    n_deret, n_xtick = [], []
+    plot_asli, xtick_asli = plt.Axes.plot, plt.Axes.set_xticks
 
-    plt.Axes.set_xticks = sadap
+    def sadap_plot(self, *a, **k):
+        n_deret.append(len(a[0]))
+        return plot_asli(self, *a, **k)
+
+    def sadap_xtick(self, ticks, *a, **k):
+        n_xtick.append(len(ticks))
+        return xtick_asli(self, ticks, *a, **k)
+
+    plt.Axes.plot, plt.Axes.set_xticks = sadap_plot, sadap_xtick
     try:
         grafik_png(tren, "tpk", "TPK Series Hotel Bintang")
     finally:
-        plt.Axes.set_xticks = asli
-    assert n_sumbu["n"] == 3, f"sumbu X harus 3 bulan, dapat {n_sumbu['n']}"
+        plt.Axes.plot, plt.Axes.set_xticks = plot_asli, xtick_asli
+    assert n_deret and all(n == 3 for n in n_deret), f"deret harus 3 bulan, dapat {n_deret}"
+    assert n_xtick and n_xtick[0] == 0, f"tick sumbu X harus dikosongkan, dapat {n_xtick}"
 
 
 def test_grafik_dua_seri_tahun_seperti_halaman():
@@ -496,6 +501,69 @@ def test_grafik_dua_seri_tahun_seperti_halaman():
     finally:
         plt.Axes.plot = asli
     assert set(warna) == {"#70AD47", "#ED7D31"}, warna
+
+
+def test_tahun_lalu_penuh_tahun_ini_berhenti_di_bulan_berjalan():
+    """Tahun lalu tidak boleh terpotong mengikuti bulan terakhir tahun ini:
+    semua datanya sudah tercatat, jadi tabel tampil sampai Desember."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    tren = [(2025, m, 40.0 + m) for m in range(1, 13)] + \
+           [(2026, m, 50.0 + m) for m in range(1, 6)]
+    tangkap = {}
+    asli = plt.Axes.table
+
+    def sadap(self, cellText=None, **k):
+        tangkap["colLabels"] = k.get("colLabels")
+        return asli(self, cellText=cellText, **k)
+
+    plt.Axes.table = sadap
+    try:
+        assert grafik_png(tren, "tpk", "TPK Series Hotel Bintang") is not None
+    finally:
+        plt.Axes.table = asli
+
+    assert len(tangkap["colLabels"]) == 12, tangkap["colLabels"]
+    assert tangkap["colLabels"][-1] == "Des", tangkap["colLabels"]
+
+
+def test_grafik_menyertakan_grid_nilai_di_bawah_sumbu():
+    """Di bawah sumbu X harus ada tabel nilai: header = bulan, baris = tahun,
+    angkanya sama dengan seri garis. Bulan tanpa data jadi sel kosong."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from modules.indesign_export import fmt_id
+
+    tren = [(2025, m, 40.0 + m) for m in range(1, 4)] + \
+           [(2026, m, None if m == 2 else 50.0 + m) for m in range(1, 4)]
+    tangkap = {}
+    asli = plt.Axes.table
+
+    def sadap(self, cellText=None, **k):
+        tangkap.update(cellText=cellText, colLabels=k.get("colLabels"),
+                       rowLabels=k.get("rowLabels"), bbox=k.get("bbox"))
+        return asli(self, cellText=cellText, **k)
+
+    plt.Axes.table = sadap
+    try:
+        assert grafik_png(tren, "tpk", "TPK Series Hotel Bintang") is not None
+    finally:
+        plt.Axes.table = asli
+
+    assert "cellText" in tangkap, "grid nilai tidak digambar"
+    assert tangkap["colLabels"] == ["Jan", "Feb", "Mar"], "header tabel = bulan"
+    assert tangkap["rowLabels"] == ["2025", "2026"], "baris tabel = tahun"
+    isi = tangkap["cellText"]
+    assert len(isi) == 2, "satu baris per tahun"
+    assert all(len(r) == 3 for r in isi), "satu kolom per bulan"
+    assert tangkap["bbox"][1] < 0, "grid harus di bawah sumbu (y negatif)"
+    assert isi[0] == [fmt_id(41.0), fmt_id(42.0), fmt_id(43.0)]
+    assert isi[1][1] == "", "bulan tanpa data harus sel kosong"
+    assert isi[1][2] == fmt_id(53.0)
 
 
 def test_grafik_tanpa_data_memberi_peringatan_bukan_diam_diam():

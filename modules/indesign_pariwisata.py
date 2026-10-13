@@ -215,9 +215,11 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
     legenda "Tahun". Judul tidak digambar — frame JUDUL_GRAFIK di template sudah
     memuatnya, jadi mengulanginya akan tercetak dua kali.
 
-    Sumbu X hanya memuat bulan yang punya data (all_data belum terisi penuh),
-    dihentikan di bulan berjalan, sama seperti halaman. Bulan tanpa angka di
-    tengah rentang tetap jadi celah (NaN), bukan 0. Sumbu Y memakai satuan BPS.
+    Sumbu X memuat bulan yang punya data di tahun mana pun. Tahun lalu tampil
+    penuh (semua datanya sudah tercatat), tahun ini berhenti di bulan berjalan,
+    sama seperti halaman web. Bulan tanpa angka tetap jadi celah (NaN), bukan 0.
+    Sumbu Y memakai satuan BPS. Di bawah sumbu X digambar tabel nilai bergaris
+    (baris = tahun, kolom = bulan), sama seperti tabel di halaman web.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -244,12 +246,11 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
     if not ada:
         return None
     bulan = list(range(min(ada), max(ada) + 1))
-    # Berhenti di bulan berjalan tahun ini, sama seperti halaman (tahun lalu tidak
-    # dipanjangkan sampai Desember kalau tahun ini baru sampai Agustus).
+    # Tahun lalu tampil penuh (semua bulan ada datanya); tahun ini berhenti di
+    # bulan berjalan, jadi label nilai dipasang di bulan itu, bukan di ujung rentang.
     m_ini = max((m for m, v in seri[tahun[-1]].items() if not pd.isna(v)), default=None)
-    if m_ini is not None:
-        bulan = [m for m in bulan if m <= m_ini]
     x = list(range(len(bulan)))
+    i_ini = bulan.index(m_ini) if m_ini in bulan else len(bulan) - 1
     # Abreviasi 3 huruf yang sama dengan halaman (bulan(m)[:3]).
     label = [BULAN[m - 1][:3] for m in bulan]
 
@@ -263,7 +264,6 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
                 markeredgecolor=warna[th], label=str(th), zorder=3)
         # label nilai titik bulan berjalan saja, seperti anotasi di halaman:
         # tahun ini ke atas, tahun lalu ke bawah supaya pasangan tidak menumpuk
-        i_ini = len(bulan) - 1
         nilai_ini = garis[i_ini]
         if not pd.isna(nilai_ini):
             atas = th == tahun[-1]
@@ -275,12 +275,9 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none",
                                   alpha=0.85), zorder=4)
 
-    ax.set_xticks(x)
-    # bulan banyak -> miringkan label supaya tidak tumpang tindih
-    rotasi = 30 if len(x) > 7 else 0
-    ax.set_xticklabels(label, fontsize=10, color="#333333",
-                       rotation=rotasi, ha="right" if rotasi else "center")
-    ax.set_xlabel("Bulan", fontsize=11, color="#333333")
+    # Nama bulan pindah ke header tabel (colLabels), jadi tick sumbu X dihapus
+    # supaya tidak dobel — sama seperti contoh matplotlib (loc='bottom').
+    ax.set_xticks([])
     ax.set_ylabel(f"{SINGKATAN[ind]} ({SATUAN[ind]})", fontsize=11, color="#333333")
     # label sumbu Y gaya BPS: tanpa notasi ilmiah, desimal koma (40 / 55,90)
     ax.yaxis.set_major_formatter(
@@ -292,6 +289,25 @@ def grafik_png(tren, ind, token, lebar_px=2130, dpi=200):
         ax.spines[sisi].set_visible(False)
     for sisi in ("left", "bottom"):
         ax.spines[sisi].set_color("#808080")
+    ax.set_xlim(-0.5, len(bulan) - 0.5)
+    # Tabel nilai di bawah sumbu X (loc='bottom'): baris = tahun, kolom = bulan.
+    baris = []
+    for th in tahun:
+        sel_baris = []
+        for m in bulan:
+            d = seri[th].get(m)
+            sel_baris.append("" if d is None or pd.isna(d) else fmt_id(d))
+        baris.append(sel_baris)
+    tab_h = 0.085 * (len(tahun) + 1)  # +1 baris header bulan
+    fig.subplots_adjust(bottom=0.06 + (0.06 + tab_h) * 0.75, top=0.98)
+    tabel = ax.table(cellText=baris, rowLabels=[str(t) for t in tahun],
+                     colLabels=label, loc="bottom", cellLoc="center",
+                     bbox=[0, -0.06 - tab_h, 1, tab_h])
+    tabel.auto_set_font_size(False)
+    tabel.set_fontsize(9)
+    for sel in tabel.get_celld().values():
+        sel.set_edgecolor("#D9D9D9")
+        sel.set_linewidth(0.6)
     # bingkai oranye mengelilingi seluruh gambar grafik (bukan area plot)
     inset = 4.0 / lebar_px
     fig.add_artist(Rectangle((inset, inset), 1 - 2 * inset, 1 - 2 * inset,
