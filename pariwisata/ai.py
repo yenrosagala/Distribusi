@@ -7,7 +7,7 @@ import streamlit as st
 from google import genai
 from sqlalchemy import text
 
-from modules.ai_backup import get_openrouter_key, openrouter_generate
+from modules.ai_backup import get_openrouter_key, openrouter_generate, GEMINI_CANDIDATE_MODELS
 from modules.config import read_secret
 from modules.etl_engine import MONTH_NAMES
 from modules.report_page import normalize_narrative, italicize_english
@@ -42,32 +42,49 @@ def _load_ref_avg(etl_engine_instance, province):
     }
 
 
-def get_gemini_client():
-    # 1. Try fetching from Streamlit secrets list first
-    api_keys = []
+def _api_keys():
+    """All configured Gemini keys: the secrets list, else a single env/secret."""
     raw = read_secret("GEMINI_API_KEYS")
-    if isinstance(raw, str):
-        api_keys = [raw]
-    elif raw:
-        api_keys = list(raw)
-
-    # 2. Fallback to single environment variable or secrets if list is empty
+    api_keys = [raw] if isinstance(raw, str) else list(raw or [])
     if not api_keys:
         env_key = os.getenv('GEMINI_API_KEY') or read_secret('GEMINI_API_KEY')
         if env_key:
             api_keys = [env_key]
+    return [str(k).strip() for k in api_keys if k and str(k).strip()]
 
-    if not api_keys:
-        return None
 
-    # Try initializing the client with the keys in sequence
-    for key in api_keys:
-        if key and str(key).strip():
+def get_gemini_client():
+    # First key that constructs wins; _gemini_text cycles the rest on failure.
+    for key in _api_keys():
+        try:
+            return genai.Client(api_key=key)
+        except Exception:
+            continue
+    return None
+
+
+def _gemini_text(prompt, client=None):
+    """First non-empty reply from the injected client then every key x model.
+
+    ``client`` is the one from :func:`get_gemini_client` (kept injectable for
+    tests) and is tried first; every configured key follows so one exhausted
+    key, or a retired model id, no longer takes the whole page's AI down.
+    """
+    clients = [client] if client is not None else []
+    for key in _api_keys():
+        try:
+            clients.append(genai.Client(api_key=key))
+        except Exception:
+            continue
+    for c in clients:
+        for model_name in GEMINI_CANDIDATE_MODELS:
             try:
-                return genai.Client(api_key=str(key).strip())
-            except Exception:
+                text = c.models.generate_content(model=model_name, contents=prompt).text
+            except Exception as exc:
+                logger.warning("Gemini gagal (%s), coba model berikutnya: %s", model_name, exc)
                 continue
-
+            if text and str(text).strip():
+                return str(text).strip()
     return None
 
 
@@ -300,14 +317,7 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                 prompt = f"Table summary for {indicator.upper()} ({jenis}) in {province}:\n" + final_table.to_string() + "\n" + base_prompt_text
                 try:
                     with st.spinner(f'Membuat narasi AI untuk {jenis} {indicator.upper()}...'):
-                        narrative_text = None
-                        if client:
-                            try:
-                                narrative_text = client.models.generate_content(
-                                    model='gemini-2.5-flash', contents=prompt
-                                ).text
-                            except Exception as exc:
-                                logger.warning("Gemini gagal, beralih ke OpenRouter: %s", exc)
+                        narrative_text = _gemini_text(prompt, client)
                         if not narrative_text or not str(narrative_text).strip():
                             narrative_text = openrouter_generate(prompt, temperature=0.3)
                     if not narrative_text or not str(narrative_text).strip():

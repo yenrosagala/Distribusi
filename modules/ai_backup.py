@@ -41,6 +41,19 @@ DEFAULT_MODELS = [
     "google/gemma-4-26b-a4b-it:free",
 ]
 
+# Gemini model ladder, tried in order; first non-empty reply wins. A single
+# hardcoded id rots the moment Google retires a version -- gemini-2.5-flash
+# already 404s ("no longer available to new users") for accounts created later
+# -- so the stable alias goes first and concrete ids back it up. Shared by the
+# dashboard, report, and pariwisata narrative generators so they cannot drift.
+GEMINI_CANDIDATE_MODELS = [
+    "gemini-flash-latest",   # stable alias -- always points at the current flash
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+]
+
 
 def get_openrouter_key():
     return read_secret("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")

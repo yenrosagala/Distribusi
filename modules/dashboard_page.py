@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from sqlalchemy import text
 from google import genai
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
-from modules.ai_backup import openrouter_generate
+from modules.ai_backup import openrouter_generate, GEMINI_CANDIDATE_MODELS
 from modules.report_page import (format_id_number, _arah_dinamis, get_gemini_api_keys,
                                  normalize_narrative, italicize_english, MONTH_MAP, INV_MONTH_MAP)
 
@@ -164,11 +164,7 @@ def generate_section_narrative_ai(moda_nama, bln, thn, prev_bln, prev_thn,
     if not api_keys:
         return None
 
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-3.1-flash-lite"
-    ]
+    candidate_models = GEMINI_CANDIDATE_MODELS
 
     if "gemini_key_index" not in st.session_state:
         st.session_state["gemini_key_index"] = 0

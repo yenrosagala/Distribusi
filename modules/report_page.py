@@ -9,7 +9,7 @@ import logging
 from google import genai
 from sqlalchemy import text
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
-from modules.ai_backup import get_openrouter_key, openrouter_generate
+from modules.ai_backup import get_openrouter_key, openrouter_generate, GEMINI_CANDIDATE_MODELS
 from modules.config import PEMETAAN_WILAYAH, get_location_metadata
 from modules.indesign_export import (
     fill_brs_template,
@@ -467,14 +467,7 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
     # api_keys boleh kosong: loop Gemini di bawah lalu tidak jalan dan langsung
     # jatuh ke cadangan OpenRouter. Jangan return di sini.
 
-    candidate_models = [
-        "gemini-2.5-flash",
-        "gemini-2.6-flash-lite",
-        "gemini-3-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite"
-    ]
+    candidate_models = GEMINI_CANDIDATE_MODELS
 
     if "gemini_key_index" not in st.session_state:
         st.session_state["gemini_key_index"] = 0
