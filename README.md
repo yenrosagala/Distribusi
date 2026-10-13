@@ -46,7 +46,7 @@ one database, one engine, one connection config.
 │   ├── ai_backup.py           # OpenRouter fallback once the Gemini keys are exhausted
 │   ├── indesign_export.py     # Fills the transport BRS .idml — no streamlit import, unit-testable
 │   └── indesign_pariwisata.py # Fills the tourism BRS .idml
-└── tests/                     # pytest suite (20 files)
+└── tests/                     # pytest suite (23 test files)
 ```
 
 `StaTransportasi`'s original `app.py` was dead code (leftover Dash
@@ -128,7 +128,7 @@ tables (`wilayah`, `transportasi_laut`, `transportasi_udara`,
 
 ## Verification status
 
-- `python -m pytest tests -q` → **142 passed**.
+- `python -m pytest tests -q` → **163 passed**.
 - `python -m compileall -q modules app.py` → clean.
 - Streamlit health endpoint returns `200 ok`; a live Gemini narrative request
   returns HTTP 200.
@@ -154,8 +154,10 @@ python -m pytest tests -q
 | `test_all_categories.py` | tables show every category; `0/0` renders as `"undefined"` |
 | `test_all_kelas.py` | accommodation tables show all classes, including empty ones |
 | `test_backup_wiring.py` | the three live call sites really invoke the OpenRouter backup |
+| `test_chart_frame_keys.py` | two trend charts on one page get unique Streamlit keys |
 | `test_dashboard_pptx.py` | the dashboard builds a valid PowerPoint deck from its figures/tables/narration |
 | `test_dashboard_table_header.py` | dashboard row/column headers stay dark on the light header |
+| `test_etl_prov_jenis_ref.py` | tourism ETL stores the province/class reference rows |
 | `test_idml_qr.py` | QR embedding + relative link rewrite in the `.idml` package |
 | `test_indesign_pariwisata.py` | the tourism `.idml` builder (kelas/tren/chart links) |
 | `test_infografis_upload.py` | infographic embedding + relative link rewrite |
@@ -164,10 +166,11 @@ python -m pytest tests -q
 | `test_meta_filter_sync.py` | sidebar filter state syncs with page filters |
 | `test_narrative_db_only.py` | narratives are read from the DB; only admins may write |
 | `test_narrative_format.py` | 0 decimals for passengers, 2 for cargo/percent, `%` → `persen` |
+| `test_pari_admin_delete.py` | tourism admin delete builds the right `WHERE` filter |
 | `test_prev_period.py` | comparison period comes from the DB, not a guess |
 | `test_report_totals.py` | report totals match the underlying rows |
 | `test_template_guard.py` | template/story-ID validation, province replacement, orphan cleanup |
-| `test_yoy_chart.py` | the YoY line chart labels the compared months and stays readable |
+| `test_yoy_chart.py` | the YoY line chart labels the compared months, shows the bordered value grid, and formats numbers in Indonesian style |
 | `test_zero_prev_period.py` | percentage math doesn't crash when the comparison value is 0 |
 
 Story and spread IDs are read from the template at test time rather than
