@@ -20,6 +20,7 @@ template di-export ulang dari InDesign, jadi peta WAJIB dicek ulang tiap
 template diganti: structure.py-able lewat inspection manual, atau cari
 errornya dari pesan guard "tidak cocok".
 """
+import base64
 import copy
 import io
 import re
@@ -551,14 +552,48 @@ def _clean_narr(p):
     return re.sub(r"^\*\(.*?\)\*\n\n", "", p or "").strip()
 
 
+# Blok <Image>...</Image> (tidak bersarang). \b wajib: <Image> juga muncul sebagai
+# <ImageIOPreference>, dan tanpa batas kata keduanya ikut tertangkap.
+_IMG_BLOCK_RE = re.compile(rb"<Image\b.*?</Image>", re.DOTALL)
+_LINK_URI_RE = re.compile(r'LinkResourceURI="([^"]*)"')
+
+
+def _embed_contents(block, data):
+    """Tanam byte gambar ke dalam satu blok <Image> sebagai <Contents> base64 dan
+    tandai <Link>-nya StoredState="Embedded".
+
+    InDesign hanya menyelesaikan LinkResourceURI absolut 'file:...': tautan
+    relatif dan path 'file:D:/BPS/...' bawaan template dua-duanya jadi missing link
+    di mesin lain. Menanam byte-nya (base64 di <Properties> PERTAMA blok itu,
+    child <Contents> bertipe) membuat .idml benar-benar mandiri.
+
+    Jangan deteksi lewat b"<Contents>" pada blok: <MetadataPacketPreference> sudah
+    punya <Contents> sendiri (payload XMP), jadi harus menyasar <Properties> pertama.
+    """
+    m = re.search(rb"<Properties(\s[^>]*)?>", block)
+    if not m:
+        return block
+    isi = b"<Contents><![CDATA[" + base64.b64encode(data) + b"]]></Contents>"
+    if m.group(0).endswith(b"/>"):
+        block = block[:m.start()] + b"<Properties>" + isi + b"</Properties>" + block[m.end():]
+    else:
+        close = block.find(b"</Properties>", m.end())
+        if close < 0:
+            return block
+        block = block[:close] + isi + block[close:]
+    return re.sub(rb'StoredState="[^"]*"', b'StoredState="Embedded"', block)
+
+
 def _embed_image(files, order, data, name, prov, thn, bln, token, label, warnings,
                  nama_paket=None):
-    """Taruh satu gambar ke dalam paket IDML dan arahkan <Link> ke file tersebut.
+    """Taruh satu gambar ke dalam paket IDML, arahkan <Link>-nya ke file tersebut,
+    dan tanam byte-nya sebagai <Contents> base64 (StoredState="Embedded").
 
     Template mengaitkan QR, Infografis, dan grafik ke path absolut 'file:D:/BPS/...'
-    di luar paket, sehingga semuanya hilang/missing link saat .idml dibuka di mesin
-    lain. Di sini filenya ditulis ke folder Links/ di dalam paket dan LinkResourceURI
-    diganti ke path relatif.
+    di luar paket, yang jadi missing link di mesin lain. Filenya ditulis ke folder
+    Links/ di dalam paket, LinkResourceURI diganti ke path relatif, DAN gambarnya
+    ditanam langsung di dalam .idml — InDesign tidak menyelesaikan URI relatif, jadi
+    tanpa <Contents> frame-nya tetap kosong walau Links/ ikut terkirim.
 
     ``token`` = potongan nama file di Links/ yang dicari ('qrcode',
     'Infografis', 'TPK Series Hotel Bintang'). Pencocokan dilakukan pada nama file
@@ -589,22 +624,22 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
 
     fmt = (b'$ID/JPEG' if ext in (".jpg", ".jpeg")
            else b'$ID/Portable Network Graphics (PNG)')
-    tag_re = re.compile(rb"<Link\b[^>]*?/>")
     # LinkResourceURI harus URL-encoded; nama file ZIP tidak.
     uri_pakai = quote(link_path, safe="/").encode()
 
-    def repl(m):
-        tag = m.group(0)
-        uri = re.search(r'LinkResourceURI="([^"]*)"', tag.decode("utf-8", "replace"))
+    def patch(m):
+        block = m.group(0)
+        uri = _LINK_URI_RE.search(block.decode("utf-8", "replace"))
         if not uri:
-            return tag
+            return block
         base = unquote(uri.group(1)).rsplit("/", 1)[-1]
         if token not in base:
-            return tag
-        tag = re.sub(rb'LinkResourceURI="[^"]*"',
-                     b'LinkResourceURI="' + uri_pakai + b'"', tag)
-        return re.sub(rb'LinkResourceFormat="[^"]*"',
-                      b'LinkResourceFormat="' + fmt + b'"', tag)
+            return block
+        block = re.sub(rb'LinkResourceURI="[^"]*"',
+                       b'LinkResourceURI="' + uri_pakai + b'"', block)
+        block = re.sub(rb'LinkResourceFormat="[^"]*"',
+                       b'LinkResourceFormat="' + fmt + b'"', block)
+        return _embed_contents(block, data)
 
     patched = 0
     for nm in list(files):
@@ -613,7 +648,7 @@ def _embed_image(files, order, data, name, prov, thn, bln, token, label, warning
         blob = files[nm]
         if b"LinkResourceURI" not in blob:
             continue
-        new = tag_re.sub(repl, blob)
+        new = _IMG_BLOCK_RE.sub(patch, blob)
         if new != blob:
             files[nm] = new
             patched += 1
@@ -631,14 +666,14 @@ _DATA_ASSET_TOKENS = ("infografis", "qrcode", "series hotel")
 
 
 def _link_images_relative(files, order, template_dir, warnings):
-    """Tanam gambar folder ``Links/`` template ke dalam paket & jadikan setiap
-    <Link> gambar relatif 'Links/<nama>'.
+    """Tanam gambar folder ``Links/`` template ke dalam paket, jadikan setiap
+    <Link> gambar relatif 'Links/<nama>', dan tanam byte-nya base64.
 
     Template menautkan foto, logo, dan grafik bawaan ke path absolut
-    'file:D:/BPS/.../Links/...', jadi di mesin lain semua itu missing link walau
-    folder Links/ ikut terkirim. Setelah ini .idml mandiri: gambarnya ada di dalam
-    paket dan menunjuk relatif, sehingga InDesign menemukannya lewat folder Links/
-    di sebelah .idml.
+    'file:D:/BPS/.../Links/...', jadi di mesin lain semua itu missing link. Setiap
+    LinkResourceURI diganti relatif DAN byte gambarnya ditanam sebagai <Contents>
+    (StoredState="Embedded") — InDesign memang tidak menyelesaikan URI relatif,
+    jadi <Contents> inilah yang benar-benar membuat .idml mandiri.
 
     Aset bermuatan data (grafik, QR, infografis) DIKECUALIKAN: aset itu hanya boleh
     masuk lewat _embed_image saat ada data/unggahan. Kalau tidak ada, frame-nya
@@ -677,41 +712,43 @@ def _link_images_relative(files, order, template_dir, warnings):
                     order.append(arc)
                 ditanam += 1
 
-    def repl(m):
-        tag = m.group(0)
-        uri = re.search(r'LinkResourceURI="([^"]*)"', tag.decode("utf-8", "replace"))
+    def patch(m):
+        block = m.group(0)
+        uri = _LINK_URI_RE.search(block.decode("utf-8", "replace"))
         if not uri:
-            return tag
+            return block
         base = unquote(uri.group(1)).rsplit("/", 1)[-1]
         arc = tersedia.get(base)
         if arc is None:
-            return tag
-        uri_baru = quote(arc, safe="/")
-        if uri.group(1) == uri_baru:
-            return tag
-        tag = re.sub(rb'LinkResourceURI="[^"]*"',
-                     b'LinkResourceURI="' + uri_baru.encode() + b'"', tag)
-        return re.sub(rb'LinkResourceFormat="[^"]*"',
-                      b'LinkResourceFormat="' + fmt_of[Path(base).suffix.lower()] + b'"', tag)
+            return block
+        block = re.sub(rb'LinkResourceURI="[^"]*"',
+                       b'LinkResourceURI="' + quote(arc, safe="/").encode() + b'"', block)
+        block = re.sub(rb'LinkResourceFormat="[^"]*"',
+                       b'LinkResourceFormat="' + fmt_of[Path(base).suffix.lower()] + b'"', block)
+        return _embed_contents(block, files[arc])
 
     for nm in spread_xml:
         blob = files[nm]
         if b"LinkResourceURI" not in blob:
             continue
-        baru = tag_re.sub(repl, blob)
+        baru = _IMG_BLOCK_RE.sub(patch, blob)
         if baru != blob:
             files[nm] = baru
     return ditanam
 
 
 def paket_zip(idml_bytes, nama_idml, template_dir=None):
-    """ZIP paket InDesign: .idml + seluruh aset folder template.
+    """ZIP paket InDesign: .idml + gambar tautan lepas + font dokumen.
 
-    ``template_dir`` = folder template asli; isinya (``Links/``, ``Document fonts/``,
-    dst.) ikut diunduh supaya tautan gambar (.jpg/.png) dan font dokumen tidak
-    putus saat dibuka di InDesign. Gambar di dalam .idml (grafik/QR/infografis
-    terbaru) menimpa aset template yang namanya sama. File .idml/.indd template
-    dilewati karena .idml sudah diganti versi terisi.
+    Gambar kini TERTANAM di dalam .idml (base64 <Contents>), jadi frame-nya terisi
+    tanpa file apa pun di sebelahnya — InDesign tidak menyelesaikan tautan relatif,
+    jadi versi sebelumnya (tautan relatif + folder Links/) tetap kosong. File
+    'Links/' tetap dikirim lepas sebagai cadangan/keperluan penautan manual.
+    'Document fonts/' ikut karena font tidak bisa tertanam di .idml.
+
+    Yang TIDAK diangkut: dokumen template (.idml/.indd), cetakan contoh (.pdf),
+    dan aset bermuatan data lama di folder template (grafik/QR/infografis) —
+    versi terbarunya sudah ada di dalam .idml.
     """
     with zipfile.ZipFile(io.BytesIO(idml_bytes)) as paket:
         idml_names = {n for n in paket.namelist() if not n.endswith("/")}
@@ -723,10 +760,12 @@ def paket_zip(idml_bytes, nama_idml, template_dir=None):
         if template_dir:
             base = Path(template_dir)
             for f in sorted(base.rglob("*")):
-                if not f.is_file() or f.suffix.lower() in (".idml", ".indd"):
+                if not f.is_file() or f.suffix.lower() in (".idml", ".indd", ".pdf"):
+                    continue
+                if any(p in f.name.lower() for p in _DATA_ASSET_TOKENS):
                     continue
                 arc = f.relative_to(base).as_posix()
-                if arc not in idml_links:
+                if arc not in idml_links:  # gambar sudah ditulis dari .idml (versi terbaru)
                     z.write(f, arc)
         for n, data in sorted(idml_links.items()):
             z.writestr(n, data)

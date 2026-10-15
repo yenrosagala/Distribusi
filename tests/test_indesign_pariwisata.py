@@ -9,6 +9,7 @@ Run:  python -m pytest tests/test_indesign_pariwisata.py -q
 import io
 import math
 import os
+import re
 import struct
 import sys
 import zipfile
@@ -579,10 +580,15 @@ def test_grafik_tanpa_data_memberi_peringatan_bukan_diam_diam():
         assert jenis in pesan[0], pesan[0]
 
 
-def test_paket_zip_berisi_idml_dan_semua_aset_template():
-    """Tombol unduh harus memberi .zip: .idml + aset folder template (Links/,
-    Document fonts/). Tanpa itu tautan gambar & font putus saat dibuka di InDesign.
-    Gambar di dalam .idml (grafik/QR terbaru) menang atas aset template."""
+def test_paket_zip_idml_gambar_lepas_dan_font_bukan_junk():
+    """Tombol unduh = .idml + gambar tautan lepas + ``Document fonts/``.
+
+    Gambar kini juga TERTANAM di dalam .idml (lihat
+    test_gambar_ditanam_base64_bukan_sekadar_ditautkan_relatif), tapi file lepas
+    tetap dikirim sebagai cadangan/keperluan mata rantai manual. Dokumen contoh
+    (.pdf), dokumen template (.idml/.indd), dan aset data lama
+    (grafik/QR/infografis) tidak boleh ikut.
+    """
     from modules.indesign_export import paket_zip
 
     r = _isi()
@@ -592,21 +598,53 @@ def test_paket_zip_berisi_idml_dan_semua_aset_template():
     assert idml_links, "ekspor tidak menghasilkan gambar apa pun"
 
     base = DEFAULT_TEMPLATE.parent
-    aset = {f.relative_to(base).as_posix()
-            for sub in ("Links", "Document fonts")
-            for f in (base / sub).iterdir() if f.is_file()}
-    assert aset, f"folder template {base} tidak punya aset"
+    font_list = (base / "Document fonts").iterdir() if (base / "Document fonts").is_dir() else []
+    fonts = {f"Document fonts/{f.name}" for f in font_list if f.is_file()}
+    assert fonts, f"folder template {base} tidak punya Document fonts/"
 
     nama = "BRS_Pariwisata_Papua_Juni_2026.idml"
     zf = zipfile.ZipFile(io.BytesIO(paket_zip(r.idml_bytes, nama, template_dir=base)))
     assert zf.testzip() is None
     isi = set(zf.namelist())
     assert nama in isi
-    aset_hilang = aset - isi
-    assert not aset_hilang, f"aset template tidak ikut: {sorted(aset_hilang)}"
-    for n in idml_links:  # gambar terbaru dari .idml harus menang
+    assert not (fonts - isi), f"font tidak ikut: {sorted(fonts - isi)}"
+    tautan_hilang = idml_links - isi
+    assert not tautan_hilang, f"gambar tautan .idml tidak ikut lepas: {sorted(tautan_hilang)}"
+    for n in idml_links:  # file lepas harus versi .idml terbaru, bukan template lama
         assert zf.read(n) == z.read(n), f"{n} bukan versi .idml"
-    assert not any(n.startswith("PNG/") for n in isi), "folder PNG/ lama masih ada"
+    assert not any(n.lower().endswith(".pdf") for n in isi), f"dokumen cetakan ikut: {sorted(isi)}"
+    assert not any(("infografis" in n.lower()) or ("qrcode" in n.lower())
+                   for n in isi), f"aset data lama ikut: {sorted(isi)}"
+
+
+def test_gambar_ditanam_base64_bukan_sekadar_ditautkan_relatif():
+    """Akar "gambar tidak muncul di InDesign": URI relatif tak diselesaikan.
+
+    InDesign hanya membuka LinkResourceURI absolut 'file:...'. Tautan relatif
+    ('Links/<nama>') jadi missing link walau folder Links/ ikut terkirim — itu
+    sebabnya gambar tampak kosong. Obatnya: setiap <Image> bertautan relatif harus
+    MEMBAWA byte-nya sendiri sebagai <Contents> base64 di <Properties> PERTAMA
+    (bukan <MetadataPacketPreference>, yang sudah punya <Contents> XMP sendiri),
+    dan Link-nya StoredState="Embedded".
+    """
+    r = _isi()
+    z = _zip(r)
+    img_re = re.compile(rb"<Image\b.*?</Image>", re.DOTALL)
+    spread = [n for n in z.namelist()
+              if n.startswith(("Spreads/", "MasterSpreads/")) and n.endswith(".xml")]
+    rel = tertanam = 0
+    for n in spread:
+        for m in img_re.finditer(z.read(n)):
+            blk = m.group(0)
+            uri = re.search(rb'LinkResourceURI="([^"]*)"', blk)
+            if not uri or not uri.group(1).decode().startswith("Links/"):
+                continue
+            rel += 1
+            props = re.search(rb"<Properties(\s[^>]*)?>(.*?)</Properties>", blk, re.DOTALL)
+            if b'StoredState="Embedded"' in blk and props and b"<Contents><![CDATA[" in props.group(2):
+                tertanam += 1
+    assert rel, "tidak ada gambar bertautan relatif untuk diperiksa"
+    assert tertanam == rel, f"gambar tidak tertanam base64: {tertanam}/{rel}"
 
 
 def test_total_resmi_menimpa_sel_yang_punya_rujukan():
