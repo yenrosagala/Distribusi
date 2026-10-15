@@ -493,7 +493,17 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
         fig.add_trace(tr, row=1, col=1)
     fig.add_trace(tabel, row=2, col=1)
     # chart plot area starts where the month columns start, so the two line up
-    fig.update_xaxes(domain=[YOY_LABEL_W, 1], row=1, col=1)
+    # Pin the range too: Plotly's category autorange pads ~0.26 of a category
+    # each side, so points drifted off their table columns at the edges.
+    # [-0.5, N-0.5] puts category i's centre at (i+0.5)/N -- exactly the table.
+    # The category order must be pinned here as well: px.line's category_orders
+    # lives on the source figure's layout, which is dropped when the traces are
+    # copied into this subplot. Without it Plotly orders categories by first
+    # appearance -- and the previous year is added first, so a Mei..Des 2025 line
+    # would place its first point on the table's "Jan" column.
+    fig.update_xaxes(domain=[YOY_LABEL_W, 1],
+                     range=[-0.5, len(bulan_urut) - 0.5],
+                     categoryorder="array", categoryarray=bulan_urut, row=1, col=1)
 
     fig.update_layout(
         yaxis_title=f"{meta['short']} ({unit})",

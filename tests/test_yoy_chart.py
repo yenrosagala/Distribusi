@@ -271,7 +271,37 @@ def test_year_column_and_months_align_with_the_plot():
     assert abs(sum(lebar) - 1) < 1e-9
     assert abs(fig.layout.xaxis.domain[0] - w) < 1e-9
     assert abs(fig.layout.xaxis.domain[1] - 1) < 1e-9
+    # and the category range must be pinned to [-0.5, N-0.5]: Plotly's category
+    # autorange pads ~0.26 of a slot each side, which scaled the points away
+    # from the equal-width table columns (edge months drifted ~15px).
+    assert tuple(fig.layout.xaxis.range) == (-0.5, len(bulan) - 0.5)
 
+
+
+def test_month_order_follows_the_calendar_not_trace_order():
+    """Regression: the current data starts at Mei, not January.
+
+    2025 holds Mei..Des and 2026 holds Jan..Agu. The prev-year trace is added
+    first, so without an explicit category array Plotly ordered the axis by first
+    appearance (Mei..Des, then Jan..Apr) and 2025's first point landed on the
+    table's "Jan" column. The axis must be pinned to the calendar order so point
+    i sits over month column i.
+    """
+    rows = []
+    for month in range(5, 13):
+        rows.append({"jenis_akomodasi": BINTANG, "year": YEAR - 1, "month": month,
+                     "tpk": 30 + month / 10, "rlmtgab": 1.5})
+    for month in range(1, 9):
+        rows.append({"jenis_akomodasi": BINTANG, "year": YEAR, "month": month,
+                     "tpk": 35 + month / 10, "rlmtgab": 1.8})
+    CAPTURED.clear()
+    pages.render_yoy_chart(pd.DataFrame(rows), "tpk", BINTANG, PROV, YEAR, 8)
+    fig = CAPTURED[0][0]
+    kalender = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu",
+                "Sep", "Okt", "Nov", "Des"]
+    assert list(fig.layout.xaxis.categoryarray) == kalender
+    assert fig.layout.xaxis.categoryorder == "array"
+    assert list(_grid_table(fig).header.values)[1:] == kalender
 
 
 CUR_LINE = "#ED7D31"
