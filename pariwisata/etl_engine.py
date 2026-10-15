@@ -2,7 +2,7 @@ import io
 import logging
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 # Setup standard logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,6 +41,8 @@ class ETLEngine:
                     mtgab REAL,
                     tpk REAL,
                     rlmtgab REAL,
+                    tpk_rse REAL,
+                    rlmtgab_rse REAL,
                     year INTEGER,
                     month INTEGER
                 )
@@ -66,6 +68,20 @@ class ETLEngine:
                     rlmtgab REAL
                 )
             """))
+            self._ensure_rse_columns(conn)
+
+    def _ensure_rse_columns(self, conn):
+        """Add RSE columns to a pre-existing all_data table.
+
+        CREATE TABLE IF NOT EXISTS never alters an existing table, so DBs created
+        before the RSE feature lack these columns. Add them in place (portable
+        across PostgreSQL and SQLite) so old data keeps its rows.
+        """
+        cols = {c["name"] for c in inspect(conn).get_columns(self.general_table_name)}
+        for col in ("tpk_rse", "rlmtgab_rse"):
+            if col not in cols:
+                conn.execute(text(
+                    f"ALTER TABLE {self.general_table_name} ADD COLUMN {col} REAL"))
 
     def _transform_data(self, df, year=None, month=None):
         df_transformed = df.copy()
@@ -85,7 +101,7 @@ class ETLEngine:
 
         desired_cols = [
             'kd_kab', 'jenis_akomodasi', 'kelas_akomodasi',
-            'mktj', 'mkts', 'mtgab', 'tpk', 'rlmtgab'
+            'mktj', 'mkts', 'mtgab', 'tpk', 'rlmtgab', 'tpk_rse', 'rlmtgab_rse'
         ]
         if actual_prov_col:
             desired_cols.append(actual_prov_col)
@@ -125,7 +141,8 @@ class ETLEngine:
                 .fillna(df_transformed['jenis_akomodasi'].astype(str))
             )
 
-        numeric_cols = ['mktj', 'mkts', 'mtgab', 'tpk', 'rlmtgab', 'kelas_akomodasi']
+        numeric_cols = ['mktj', 'mkts', 'mtgab', 'tpk', 'rlmtgab',
+                        'tpk_rse', 'rlmtgab_rse', 'kelas_akomodasi']
         for col in numeric_cols:
             if col in df_transformed.columns:
                 df_transformed[col] = pd.to_numeric(df_transformed[col], errors='coerce').fillna(0)

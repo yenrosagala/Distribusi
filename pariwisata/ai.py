@@ -216,7 +216,13 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
             st.markdown(f"<h4 style='color: #1e293b; margin-top: 0;'>Indicator: {indicator.upper()} — {jenis}</h4>", unsafe_allow_html=True)
             st.divider()
 
-            cur_sub = df_current[df_current['jenis_akomodasi'] == jenis][['kelas_akomodasi', indicator]].rename(columns={indicator: 'current'})
+            rse_col = f"{indicator}_rse"
+            keep_rse = rse_col in df_current.columns
+            cur_cols = ['kelas_akomodasi', indicator] + ([rse_col] if keep_rse else [])
+            cur_sub = (df_current[df_current['jenis_akomodasi'] == jenis][cur_cols]
+                       .rename(columns={indicator: 'current'}))
+            if keep_rse:
+                cur_sub = cur_sub.rename(columns={rse_col: 'current_rse'})
             prev_sub = df_prev[df_prev['jenis_akomodasi'] == jenis][['kelas_akomodasi', indicator]].rename(columns={indicator: 'prev'})
             last_sub = df_last[df_last['jenis_akomodasi'] == jenis][['kelas_akomodasi', indicator]].rename(columns={indicator: 'last_year'})
 
@@ -274,6 +280,16 @@ def generate_akomodasi_tables(etl_engine_instance, province, year, month, trend_
                     avg_row.loc["Total", cell] = round(ref[indicator], 2)
             avg_row["change_prev"] = (avg_row["current"] - avg_row["prev"]).round(2)
             avg_row["change_last"] = (avg_row["current"] - avg_row["last_year"]).round(2)
+
+            # Tanda (*) pada nilai bulan ini per kelas bila RSE > 25%; baris Total
+            # tidak pernah dibintang (display_df tidak memuat baris Total).
+            if keep_rse and 'current_rse' in merged.columns:
+                rse_by_kelas = merged.set_index('nama_kelas_akomodasi')['current_rse']
+                display_df['current'] = display_df['current'].astype(object)
+                for idx in display_df.index:
+                    rv = rse_by_kelas.get(idx)
+                    if pd.notna(rv) and rv > 0.25 and pd.notna(display_df.at[idx, 'current']):
+                        display_df.at[idx, 'current'] = f"{display_df.at[idx, 'current']:.2f}*"
 
             final_table = pd.concat([display_df, avg_row])
             for col in ['change_prev', 'change_last']:

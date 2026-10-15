@@ -15,3 +15,9 @@ venv/
 # Local SQLite database -- machine-local artifact (may hold dummy/seed data).
 # Real data lives in Postgres via DATABASE_URL; never commit this file.
 data/*.db
+
+# Local fill-in template + its generator + one-off re-ingest loader.
+# Template is a binary data artifact; loader hardcodes local source paths.
+Template_Isi_Pariwisata_2025.xlsx
+build_template.py
+load_pariwisata.py

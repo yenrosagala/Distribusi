@@ -341,6 +341,20 @@ def deret_tabel(blok, jenis):
     return keluar
 
 
+def bintang_tabel(blok, ind):
+    """Tanda (*) per baris tabel: True bila RSE bulan ini > 25%. Total selalu False.
+
+    Urutannya sejajar dengan ``deret_tabel`` (satu per kelas, lalu baris Total).
+    """
+    rse = blok.get("rse") or {}
+    keluar = []
+    for k in KELAS_TEMPLATE:
+        v = rse.get(k)
+        keluar.append(bool(pd.notna(v) and v > 0.25))
+    keluar.append(False)  # Total tidak pernah dibintang
+    return keluar
+
+
 # ---------------------------------------------------------------------------
 # Pengambilan data
 # ---------------------------------------------------------------------------
@@ -364,6 +378,34 @@ def _baca_ref(engine, prov):
             {"tpk": r.tpk, "rlmtgab": r.rlmtgab}
         for r in df.itertuples()
     }
+
+
+def _baca_rse(engine, prov, thn, bln_m, tabel="all_data"):
+    """RSE bulan berjalan per (jenis, kelas, indikator) untuk tanda (*).
+
+    Kolom RSE baru ada setelah migrasi/pengisian ulang; DB lama maupun tabel uji
+    yang tak memuatnya -> {} supaya pembuatan BRS tetap jalan tanpa bintang.
+    """
+    try:
+        df = pd.read_sql_query(
+            text(f"SELECT jenis_akomodasi, kelas_akomodasi, tpk_rse, rlmtgab_rse "
+                 f"FROM {tabel} "
+                 f"WHERE TRIM(CAST(kd_prov AS TEXT)) = :prov "
+                 f"AND year = :thn AND month = :bln"),
+            engine,
+            params={"prov": str(prov).strip(), "thn": int(thn), "bln": bln_m},
+        )
+    except Exception:
+        logger.info("Kolom RSE belum tersedia di %s, tanda (*) dilewati", tabel)
+        return {}
+    keluar = {}
+    for r in df.itertuples():
+        if pd.isna(r.kelas_akomodasi):
+            continue
+        k = int(r.kelas_akomodasi)
+        keluar[(r.jenis_akomodasi, k, "tpk")] = r.tpk_rse
+        keluar[(r.jenis_akomodasi, k, "rlmtgab")] = r.rlmtgab_rse
+    return keluar
 
 
 def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
@@ -399,6 +441,7 @@ def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
         return keluar
 
     ref = _baca_ref(engine, prov)
+    rse_all = _baca_rse(engine, prov, thn, bln_m, tabel)
     periode = ((int(thn) - 1, bln_m), (int(prev_thn), BULAN_N[prev_bln]),
                (int(thn), bln_m))
     for ind in INDIKATOR:
@@ -419,6 +462,7 @@ def kumpulkan_kelas(engine, prov, thn, bln, tabel="all_data"):
             keluar[(ind, jenis)] = {
                 "rows": rows,
                 "total": _total_resmi(rows, ref, jenis, ind, periode),
+                "rse": {k: rse_all.get((jenis, k, ind), np.nan) for k in kelas},
                 "tren": _tren(sub, kelas, ind, int(thn), bln_m, ref=ref, jenis=jenis),
             }
     return keluar
@@ -579,12 +623,15 @@ def _tulis(psr, texts, warnings, sid, tab=False, tertulis=None):
         tertulis.add(sid)
 
 
-def _isi_tabel(tbl, deret, bln, thn, prev_bln, prev_thn, ind):
+def _isi_tabel(tbl, deret, bln, thn, prev_bln, prev_thn, ind, bintang=None):
     """Tabel BPS: 13 sel header, lalu tiap baris 6 sel (label + 5 angka).
 
     Header ditulis lengkap di sini — termasuk nama indikator di sel 1. Kalau
     sel 1 diisi terpisah di luar fungsi ini, penulisan header berikut akan
     menimpanya dengan string kosong dan kolom "TPK (Persen)" jadi kosong.
+
+    ``bintang`` (opsional) menandai baris yang nilai bulan ini-nya diberi "(*)"
+    karena RSE > 25%; sejajar dengan urutan ``deret``.
     """
     cells = tbl.findall("Cell")
     if len(cells) != 13 + 6 * len(deret):
@@ -603,7 +650,11 @@ def _isi_tabel(tbl, deret, bln, thn, prev_bln, prev_thn, ind):
         label, *vals = baris
         _set_cell_text(cells[off], label)
         for j, v in enumerate(vals):
-            _set_cell_text(cells[off + 1 + j], angka(v))
+            teks = angka(v)
+            # kolom bulan ini saja (j=2), dan hanya bila angkanya ada
+            if j == 2 and bintang and bintang[i] and teks != SEL_TIDAK_ADA:
+                teks += "*"
+            _set_cell_text(cells[off + 1 + j], teks)
     return True
 
 
@@ -697,7 +748,8 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
         _tulis(_psr_akar(root, "Judul Tabel BRS"),
                [f"{SINGKATAN_PANJANG[ind]} {jenis} di {prov}, {bln} {thn}"],
                warnings, sid, tertulis=tertulis)
-        if _isi_tabel(tbl, deret_tabel(blok, jenis), bln, thn, prev_bln, prev_thn, ind):
+        if _isi_tabel(tbl, deret_tabel(blok, jenis), bln, thn, prev_bln, prev_thn, ind,
+                      bintang=bintang_tabel(blok, ind)):
             terisi += 1
             tertulis.add(sid)
         else:
@@ -783,8 +835,6 @@ def fill_brs_pariwisata_template(template_bytes, prov, thn, bln, data,
     warnings.append("Baris Total dihitung sebagai rata-rata tidak berbobot antar kelas. Total "
                     "resmi BPS dibobot jumlah kamar, yang tidak ada di all_data — "
                     "verifikasi angka Total di InDesign.")
-    warnings.append("Tanda (*) RSE >25% tidak dihitung karena all_data tidak menyimpan RSE — "
-                    "baris kaki tabel dibiarkan, tapi nilai tidak diberi bintang.")
     kosong, tipis = [], []
     for (ind, jenis), token in TOKEN_GRAFIK.items():
         blok = data.get((ind, jenis))

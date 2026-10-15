@@ -22,8 +22,8 @@ os.environ.setdefault("STREAMLIT_SUPPRESS_WARNINGS", "1")
 from modules.indesign_pariwisata import (  # noqa: E402
     DEFAULT_TEMPLATE, KELAS_TEMPLATE, LABEL_KOLOM, RINGKASAN, RINGKASAN_UTAMA,
     RASIO_GRAFIK, JUDUL_GRAFIK, TABEL_SLOTS, TOKEN_GRAFIK, TPL_PROV_TOKENS,
-    deret_tabel, fill_brs_pariwisata_template, grafik_png, kumpulkan_kelas,
-    total_kelas,
+    bintang_tabel, deret_tabel, fill_brs_pariwisata_template, grafik_png,
+    kumpulkan_kelas, total_kelas,
 )
 
 PROV = "Papua Pegunungan"
@@ -234,11 +234,11 @@ def test_tidak_ada_provinsi_asing_dan_salah_ketik():
 
 
 def test_tidak_ada_peringatan_kegagalan_slot():
-    """Hanya peringatan manual (Total, RSE, cek InDesign) dan konfirmasi penempatan
+    """Hanya peringatan manual (Total, cek InDesign) dan konfirmasi penempatan
     gambar yang boleh muncul; sisanya berarti ada slot yang gagal ditulis."""
     r = _isi()
     keras = [w for w in r.warnings
-             if not w.startswith(("Baris Total", "Tanda (*)", "Setelah dibuka",
+             if not w.startswith(("Baris Total", "Setelah dibuka",
                                   "Grafik ", "QR code", "Infografis"))]
     assert not keras, f"peringatan tak terduga: {keras}"
 
@@ -307,6 +307,29 @@ def test_kelas_kosong_tertulis_tanda_strip_di_tabel():
     baris_kosong = sel[mulai:mulai + 6]
     assert baris_kosong[0] == "Bintang 2", baris_kosong
     assert baris_kosong[1:] == ["-"] * 5, f"kelas kosong harus '-', dapat {baris_kosong[1:]}"
+
+
+def test_bintang_rse_hanya_kolom_bulan_ini_dan_bukan_total():
+    """Tanda (*) hanya untuk RSE bulan ini > 0.25; baris Total tak pernah dibintang."""
+    assert bintang_tabel({"rse": {1: 0.30, 2: 0.25, 3: 0.10, 4: NAN}}, "tpk") == \
+        [True, False, False, False, False]
+    assert bintang_tabel({}, "tpk") == [False, False, False, False, False]
+
+
+def test_rse_bintang_hanya_kolom_bulan_ini():
+    """Hanya sel bulan ini (kolom ke-3 tiap baris) yang diberi '*' bila RSE > 0.25;
+    tahun lalu, bulan lalu, perubahan, dan baris Total tidak pernah dibintang."""
+    data = dict(DATA)
+    data[("tpk", "Hotel Bintang")] = dict(
+        DATA[("tpk", "Hotel Bintang")], rse={1: 0.30, 3: 0.05, 4: 0.25})
+    r = _isi(data=data)
+    z = _zip(r)
+    sel = ["".join(c.itertext()).strip() for c in
+           ET.fromstring(z.read("Stories/Story_uc98.xml")).findall(".//Table/Cell")]
+    assert "33,31*" in sel, "Bintang 1 (RSE 0,30) harus dibintang"
+    assert [s for s in sel if s.endswith("*")] == ["33,31*"], \
+        f"hanya sel bulan ini Bintang 1 yang boleh berbintang: {[s for s in sel if s.endswith('*')]}"
+    assert "51,66" in sel and "51,66*" not in sel, "RSE 0,25 tidak > 0.25 -> tanpa bintang"
 
 
 def test_daftar_dua_unsur_tanpa_koma_sebelum_dan():
