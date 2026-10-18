@@ -18,6 +18,6 @@ data/*.db
 
 # Local fill-in template + its generator + one-off re-ingest loader.
 # Template is a binary data artifact; loader hardcodes local source paths.
-Template_Isi_Pariwisata_2025.xlsx
+Template_Isi_Pariwisata_*.xlsx
 build_template.py
 load_pariwisata.py

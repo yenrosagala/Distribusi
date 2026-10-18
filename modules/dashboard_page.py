@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import io
 import streamlit as st
 from pptx import Presentation
@@ -8,8 +8,8 @@ import plotly.graph_objects as go
 from sqlalchemy import text
 from google import genai
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
-from modules.ai_backup import openrouter_generate, GEMINI_CANDIDATE_MODELS
-from modules.report_page import (format_id_number, _arah_dinamis, get_gemini_api_keys,
+from modules.ai_backup import generate_text
+from modules.report_page import (format_id_number, _arah_dinamis,
                                  normalize_narrative, italicize_english, MONTH_MAP, INV_MONTH_MAP)
 
 logger = logging.getLogger(__name__)
@@ -160,61 +160,7 @@ def compute_indicator_stats(df_curr, df_prev, df_cum_curr, df_cum_prev, cols):
 
 def generate_section_narrative_ai(moda_nama, bln, thn, prev_bln, prev_thn,
                                    penumpang_stats, barang_stats, satuan_barang):
-    api_keys = get_gemini_api_keys()
-    if not api_keys:
-        return None
-
-    candidate_models = GEMINI_CANDIDATE_MODELS
-
-    if "gemini_key_index" not in st.session_state:
-        st.session_state["gemini_key_index"] = 0
-
-    num_keys = len(api_keys)
-
-    prompt = (
-        "Anda adalah Analis Kebijakan Utama dan Ahli Statistik Senior pada Direktorat Statistik Transportasi Badan Pusat Statistik (BPS).\n"
-        f"Susunlah sebuah Executive Summary resmi yang objektif, analitis, dan berwibawa tepat dalam 2 (dua) paragraf untuk publikasi kinerja Transportasi {moda_nama} "
-        f"di regional Papua (Provinsi Papua, Papua Selatan, Papua Tengah, dan Papua Pegunungan) periode {bln} {thn}.\n\n"
-        "Standar Penulisan & Kaidah Kebahasaan:\n"
-        "- Gunakan ragam bahasa resmi instansi pemerintah (bahasa baku, objektif, berorientasi data).\n"
-        "- Hindari pengulangan kata yang monoton; gunakan diksi analitis.\n\n"
-        "Struktur & Substansi Wajib:\n"
-        "1. Paragraf Pertama (Analisis Bulanan / Month-to-Month):\n"
-        f"   - Evaluasi komparatif volume agregat penumpang saat ini ({format_id_number(penumpang_stats['curr'], 0)} orang) terhadap baseline {prev_bln} {prev_thn} ({format_id_number(penumpang_stats['prev'], 0)} orang).\n"
-        f"   - Analisis dinamika volume barang: realisasi {format_id_number(barang_stats['curr'], 2)} {satuan_barang} berbanding periode sebelumnya {format_id_number(barang_stats['prev'], 2)} {satuan_barang}.\n\n"
-        "2. Paragraf Kedua (Analisis Kumulatif / Year-to-Date & Year-on-Year):\n"
-        f"   - Bedah performa makro kumulatif Januari–{bln} {thn} untuk penumpang dan barang.\n\n"
-        "Aturan Mutlak:\n"
-        "- Keluarkan HANYA teks dua paragraf tanpa pengantar, tanpa judul, dan tanpa penutup.\n"
-        "- Format angka mutlak menerapkan standar penulisan Indonesia."
-    )
-
-    for attempt in range(num_keys):
-        current_idx = (st.session_state["gemini_key_index"] + attempt) % num_keys
-        key = api_keys[current_idx]
-        
-        for model_name in candidate_models:
-            try:
-                client = genai.Client(api_key=key.strip())
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=genai.types.GenerateContentConfig(temperature=0.3)
-                )
-                raw_text = getattr(response, "text", None)
-                if raw_text and str(raw_text).strip():
-                    st.session_state["gemini_key_index"] = (current_idx + 1) % num_keys
-                    return str(raw_text).strip()
-            except Exception as e:
-                logger.warning("Gagal dengan Key ke-%d menggunakan model %s: %s", current_idx + 1, model_name, e)
-                continue
-
-    # Semua Gemini key gagal -> coba OpenRouter sebagai cadangan.
-    backup = openrouter_generate(prompt, temperature=0.3)
-    if backup:
-        return backup
-
-    return None                                       
+        text_clean, _ = generate_text(''.join(['Anda adalah Analis Kebijakan Utama dan Ahli Statistik Senior pada Direktorat Statistik Transportasi Badan Pusat Statistik (BPS).\n','Susunlah sebuah Executive Summary resmi yang objektif, analitis, dan berwibawa tepat dalam 2 (dua) paragraf untuk publikasi kinerja Transportasi ', str(moda_nama),' di regional Papua (Provinsi Papua, Papua Selatan, Papua Tengah, dan Papua Pegunungan) periode ', str(bln), ' ', str(thn), '.\n\n','Standar Penulisan & Kaidah Kebahasaan:\n','- Gunakan ragam bahasa resmi instansi pemerintah (bahasa baku, objektif, berorientasi data).\n','- Hindari pengulangan kata yang monoton; gunakan diksi analitis.\n\n','Struktur & Substansi Wajib:\n','1. Paragraf Pertama (Analisis Bulanan / Month-to-Month):\n','- Evaluasi komparatif volume agregat penumpang saat ini (', str(format_id_number(penumpang_stats['curr'], 0)), ' orang) terhadap baseline ', str(prev_bln), ' ', str(prev_thn), ' (', str(format_id_number(penumpang_stats['prev'], 0)), ' orang).\n','- Analisis dinamika volume barang: realisasi ', str(format_id_number(barang_stats['curr'], 2)), ' ', satuan_barang, ' berbanding periode sebelumnya ', str(format_id_number(barang_stats['prev'], 2)), ' ', satuan_barang, '.\n\n','2. Paragraf Kedua (Analisis Kumulatif / Year-to-Date & Year-on-Year):\n','- Bedah performa makro kumulatif Januari\u2013', str(bln), ' ', str(thn), ' untuk penumpang dan barang.\n\n','Aturan Mutlak:\n','- Keluarkan HANYA teks dua paragraf tanpa pengantar, tanpa judul, dan tanpa penutup.\n','- Format angka mutlak menerapkan standar penulisan Indonesia.']), temperature=0.3); return text_clean
 
 
 def generate_section_narrative_fallback(moda_nama, bln, thn, prev_bln, prev_thn,
@@ -561,3 +507,4 @@ def show_dashboard_page():
         table_detail = "transportasi_laut" if moda_detail == "Transportasi Laut" else "transportasi_udara"
         df_detail = load_period_data(engine, table_detail, sel_thn, sel_bln)
         st.dataframe(df_detail, width='stretch')
+

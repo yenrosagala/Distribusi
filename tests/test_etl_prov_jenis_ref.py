@@ -109,6 +109,25 @@ def test_reupload_same_period_replaces_reference():
     assert abs(ref[(ref.kd_prov == "Papua") & (ref.jenis_akomodasi == "Hotel Bintang")].iloc[0].tpk - 41.481313) < 1e-6
 
 
+def test_file_carried_period_ingests_multiple_months():
+    etl = _engine()
+    km = KELAS.assign(year=[2024, 2024, 2024], month=[1, 1, 2])
+    # No year/month args: the columns in the file define the periods, so one
+    # upload lands both January and February.
+    etl.etl_pipeline(FakeUpload("multi.xlsx", _workbook({"Prov_Jenis_Kelas": km})))
+    rows = _rows(etl, "SELECT year, month, COUNT(*) AS n FROM all_data "
+                      "GROUP BY year, month ORDER BY year, month")
+    assert set(zip(rows.year, rows.month)) == {(2024, 1), (2024, 2)}, rows
+
+    # Re-uploading only February replaces it and leaves January untouched.
+    feb = KELAS.iloc[[0]].assign(year=2024, month=2)
+    etl.etl_pipeline(FakeUpload("feb.xlsx", _workbook({"Prov_Jenis_Kelas": feb})))
+    jan_n = _rows(etl, "SELECT COUNT(*) AS n FROM all_data WHERE year=2024 AND month=1").iloc[0].n
+    feb_n = _rows(etl, "SELECT COUNT(*) AS n FROM all_data WHERE year=2024 AND month=2").iloc[0].n
+    assert jan_n == 2, jan_n
+    assert feb_n == 1, feb_n
+
+
 if __name__ == '__main__':
     for name, fn in sorted(list(globals().items())):
         if name.startswith('test_'):

@@ -50,7 +50,7 @@ class Spy:
         self.calls = 0
         self.models = self  # code calls client.models.generate_content(...)
 
-    def generate_content(self, model=None, contents=None):
+    def generate_content(self, model=None, contents=None, **kwargs):
         self.calls += 1
         return type("R", (), {"text": FRESH})()
 

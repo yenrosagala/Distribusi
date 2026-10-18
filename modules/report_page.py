@@ -9,7 +9,7 @@ import logging
 from google import genai
 from sqlalchemy import text
 from modules.database import get_engine, get_db_narrative, save_db_narrative, delete_db_narrative
-from modules.ai_backup import get_openrouter_key, openrouter_generate, GEMINI_CANDIDATE_MODELS
+from modules.ai_backup import generate_text
 from modules.config import PEMETAAN_WILAYAH, get_location_metadata
 from modules.indesign_export import (
     fill_brs_template,
@@ -413,37 +413,6 @@ def _arah_dinamis(pct):
     if pct < 0: return "menurun"
     return "stabil"
 
-def get_gemini_api_keys():
-    keys = []
-    def add_value(v):
-        if not v: return
-        if isinstance(v, str):
-            v = v.strip()
-            if v: keys.append(v)
-        elif isinstance(v, (list, tuple)):
-            for x in v: add_value(x)
-        else:
-            s = str(v).strip()
-            if s: keys.append(s)
-
-    try:
-        add_value(st.secrets.get("GEMINI_API_KEYS"))
-        add_value(st.secrets.get("GEMINI_API_KEY"))
-        add_value(st.secrets.get("GOOGLE_API_KEY"))
-        add_value(st.secrets.get("API_GEMINI_KEYS"))
-        add_value(st.secrets.get("API_GEMINI_KEY"))
-        add_value(st.secrets.get("API-GEMINI-KEYS"))
-    except Exception as e:
-        logger.exception("Gagal membaca Streamlit secrets: %s", e)
-
-    seen = set()
-    unique_keys = []
-    for k in keys:
-        if k not in seen:
-            seen.add(k)
-            unique_keys.append(k)
-    return unique_keys
-
 def parse_two_paragraphs(text):
     if not text or not str(text).strip(): return None, None
     parts = [p.strip() for p in str(text).strip().split("\n\n") if p.strip()]
@@ -456,25 +425,12 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
     report_type = f"report_{moda}_{label}"
     period_key = f"{prov}|{bln}|{thn}"
     
-    # 1. Cek database terlebih dahulu (Retrieve)
     db_text = get_db_narrative(report_type, period_key)
     if db_text:
         return db_text, "Database (Cached)"
 
-    api_keys = get_gemini_api_keys()
-    if not api_keys and not get_openrouter_key():
-        return None, "No API Key"
-    # api_keys boleh kosong: loop Gemini di bawah lalu tidak jalan dan langsung
-    # jatuh ke cadangan OpenRouter. Jangan return di sini.
-
-    candidate_models = GEMINI_CANDIDATE_MODELS
-
-    if "gemini_key_index" not in st.session_state:
-        st.session_state["gemini_key_index"] = 0
-
-    num_keys = len(api_keys)
     data_str = df_flat.to_string(index=False)
-    
+
     prompt = (
         "Anda adalah Kepala Pusat Statistik / Penasihat Kebijakan Utama yang menyusun ringkasan eksekutif strategis berstandar tinggi bagi Dewan Pimpinan dan Pengambil Kebijakan.\n"
         f"Buatlah narasi Executive Summary tingkat tinggi yang padat dan tajam (tepat 2 paragraf) untuk indikator statistik \"{label}\" pada moda {moda} Wilayah Provinsi {prov} periode komparasi {bln} {thn} terhadap {prev_bln} {prev_thn}.\n\n"
@@ -487,36 +443,11 @@ def generate_single_narrative_ai(df_flat, label, prov, moda, bln, thn, prev_bln,
         f"{data_str}"
     )
 
-    for attempt in range(num_keys):
-        current_idx = (st.session_state["gemini_key_index"] + attempt) % num_keys
-        key = api_keys[current_idx]
-        
-        for model_name in candidate_models:
-            try:
-                client = genai.Client(api_key=key.strip())
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=genai.types.GenerateContentConfig(temperature=0.2)
-                )
-                raw_text = getattr(response, "text", None)
-                if raw_text and str(raw_text).strip():
-                    text_clean = str(raw_text).strip()
-                    # Simpan otomatis ke database saat pertama kali di-generate
-                    save_db_narrative(report_type, period_key, text_clean)
-                    st.session_state["gemini_key_index"] = (current_idx + 1) % num_keys
-                    return text_clean, f"Gemini AI ({model_name})"
-            except Exception as e:
-                logger.warning("Gagal pada Report dengan Key ke-%d menggunakan model %s: %s...", current_idx + 1, model_name, e)
-                continue
-
-    # Semua Gemini key gagal -> coba OpenRouter sebagai cadangan.
-    backup = openrouter_generate(prompt, temperature=0.2)
-    if backup:
-        save_db_narrative(report_type, period_key, backup)
-        return backup, "OpenRouter (Cadangan)"
-
-    return None, "Failed"
+    text_clean, source = generate_text(prompt, temperature=0.2)
+    if text_clean:
+        save_db_narrative(report_type, period_key, text_clean)
+        return text_clean, source
+    return None, source
 
 def generate_narrative_fallback(report_flat, col_target, moda, region_label, bln, thn, prev_bln, prev_thn,
                                col_prev, col_curr, col_cum_prev, col_cum_curr, prov=""):

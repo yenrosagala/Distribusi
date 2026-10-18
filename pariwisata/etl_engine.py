@@ -106,12 +106,17 @@ class ETLEngine:
         if actual_prov_col:
             desired_cols.append(actual_prov_col)
 
-        if year is not None:
-            df_transformed['year'] = year
-            desired_cols.append('year')
-        if month is not None:
-            df_transformed['month'] = month
-            desired_cols.append('month')
+        # Period (year/month): a file that carries its own columns -- e.g. the
+        # multi-month fill-in template -- wins, so one upload can span several
+        # months. Otherwise fall back to the arguments from the Admin form, so
+        # plain source files (no year/month columns) keep working unchanged.
+        for col, fallback in (('year', year), ('month', month)):
+            if col in df_transformed.columns:
+                df_transformed[col] = pd.to_numeric(df_transformed[col], errors='coerce')
+            elif fallback is not None:
+                df_transformed[col] = fallback
+            if col in df_transformed.columns:
+                desired_cols.append(col)
 
         existing_cols = [col for col in desired_cols if col in df_transformed.columns]
         df_transformed = df_transformed[existing_cols]
@@ -147,6 +152,13 @@ class ETLEngine:
             if col in df_transformed.columns:
                 df_transformed[col] = pd.to_numeric(df_transformed[col], errors='coerce').fillna(0)
 
+        # Drop rows with no period and normalise to int so the insert lands in
+        # the INTEGER year/month columns.
+        for col in ('year', 'month'):
+            if col in df_transformed.columns:
+                df_transformed = df_transformed[df_transformed[col].notna()]
+                df_transformed[col] = df_transformed[col].astype(int)
+
         subset_cols = [col for col in ['kd_prov', 'kd_kab', 'jenis_akomodasi', 'kelas_akomodasi', 'year', 'month'] if col in df_transformed.columns]
         if subset_cols:
             df_transformed = df_transformed.drop_duplicates(subset=subset_cols, keep='last')
@@ -175,7 +187,7 @@ class ETLEngine:
         # Sheet Prov_Jenis carries the official provincial TPK/RLMTGAB estimate
         # per jenis; store it as the reference "average" for this period.
         ref_rows = pd.DataFrame()
-        if 'Prov_Jenis' in excel_file.sheet_names and year is not None and month is not None:
+        if 'Prov_Jenis' in excel_file.sheet_names:
             ref_rows = self._transform_data(
                 pd.read_excel(excel_file, sheet_name='Prov_Jenis'), year=year, month=month,
             )
@@ -183,19 +195,33 @@ class ETLEngine:
             # columns or the insert fails on "no such column".
             ref_cols = ['kd_prov', 'jenis_akomodasi', 'year', 'month', 'tpk', 'rlmtgab']
             ref_rows = ref_rows[[c for c in ref_cols if c in ref_rows.columns]]
+            if not {'year', 'month'} <= set(ref_rows.columns):
+                ref_rows = pd.DataFrame()
+
+        # One upload may carry several periods (fill-in template); replace each
+        # (year, month) it touches so a re-upload overwrites instead of doubling.
+        periods = self._periods(df_transformed)
+        ref_periods = self._periods(ref_rows)
 
         with self.engine.begin() as conn:
-            if year is not None and month is not None:
+            for y, m in periods:
                 conn.execute(
                     text(f"DELETE FROM {self.general_table_name} WHERE year = :year AND month = :month"),
-                    {"year": year, "month": month},
+                    {"year": y, "month": m},
                 )
-                if not ref_rows.empty:
-                    conn.execute(
-                        text(f"DELETE FROM {PARIWISATA_REF_AVG} WHERE year = :year AND month = :month"),
-                        {"year": year, "month": month},
-                    )
+            for y, m in ref_periods:
+                conn.execute(
+                    text(f"DELETE FROM {PARIWISATA_REF_AVG} WHERE year = :year AND month = :month"),
+                    {"year": y, "month": m},
+                )
             df_transformed.to_sql(self.general_table_name, conn, if_exists='append', index=False)
             if not ref_rows.empty:
                 ref_rows.to_sql(PARIWISATA_REF_AVG, conn, if_exists='append', index=False)
             logger.info(f"Successfully loaded {len(df_transformed)} rows.")
+
+    @staticmethod
+    def _periods(df):
+        """Distinct (year, month) pairs present in a transformed frame; [] if none."""
+        if df is None or df.empty or 'year' not in df.columns or 'month' not in df.columns:
+            return []
+        return sorted({(int(y), int(m)) for y, m in zip(df['year'], df['month'])})
