@@ -131,9 +131,13 @@ def process_laut(df_raw, tahun, bulan):
             continue
             
         parsed_data.append({
-            'tahun': str(tahun), 'bulan': bulan, 'kode_provinsi': prov_code,
-            'kode_kabkota': kab_code, 'nama_kabkota': kab_name, 
-            'kode_pelabuhan': pel_code, 'nama_pelabuhan': pel_name,
+            # Kolom di transportasi_laut bertipe bigint; mengirim string membuat
+            # Postgres menolak INSERT (DatatypeMismatch). SQLite menyimpannya
+            # sebagai int juga, jadi angka cocok di kedua backend.
+            'tahun': int(tahun), 'bulan': bulan,
+            'kode_provinsi': int(prov_code),
+            'kode_kabkota': int(kab_code), 'nama_kabkota': kab_name,
+            'kode_pelabuhan': int(pel_code), 'nama_pelabuhan': pel_name,
             'dn_penumpang_turun': int(clean_number(row[4])), 
             'dn_penumpang_naik': int(clean_number(row[5])),
             'dn_bongkar_barang_ton': clean_number(row[6]), 
@@ -154,9 +158,11 @@ def process_udara(df_raw, tahun, bulan):
             continue
             
         parsed_data.append({
-            'tahun': str(tahun), 'bulan': bulan, 'kode_provinsi': prov_code,
-            'kode_kabkota': kab_code, 'nama_kabkota': kab_name, 
-            'kode_bandara': ban_code, 'nama_bandara': ban_name,
+            # Sama seperti process_laut: kolom bigint, bukan varchar.
+            'tahun': int(tahun), 'bulan': bulan,
+            'kode_provinsi': int(prov_code),
+            'kode_kabkota': int(kab_code), 'nama_kabkota': kab_name,
+            'kode_bandara': int(ban_code), 'nama_bandara': ban_name,
             'pesawat_berangkat': int(clean_number(row[4])), 
             'pesawat_datang': int(clean_number(row[5])),
             'penumpang_berangkat': int(clean_number(row[6])), 
