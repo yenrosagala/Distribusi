@@ -12,6 +12,9 @@ venv/
 .pytest_cache/
 .ruff_cache/
 
+# Node clone (node-app/)
+node_modules/
+
 # Local SQLite database -- machine-local artifact (may hold dummy/seed data).
 # Real data lives in Postgres via DATABASE_URL; never commit this file.
 data/*.db

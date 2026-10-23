@@ -142,6 +142,21 @@ def _advance_key_index(next_index):
             pass
 
 
+# ponytail: process-local dead-key cache. The Gemini keys shipped in secrets are
+# OAuth tokens (AQ.Ab8...) that always 401, so without this every narrative paid
+# 15 keys x 5 models of failed round-trips before reaching OpenRouter. A key that
+# is rotated back to life needs a process restart; move to a TTL dict if that
+# ever hurts.
+_DEAD_KEYS = set()
+
+
+def _is_dead_key_error(exc):
+    text = str(exc).upper()
+    return any(token in text for token in (
+        "UNAUTHENTICATED", "API KEY NOT VALID", "API_KEY_INVALID", "PERMISSION_DENIED",
+    ))
+
+
 def _generate_gemini(prompt, temperature=None, client=None, keys=None):
     """``(text, model)`` of the first non-empty Gemini reply, else ``(None, None)``.
 
@@ -154,7 +169,7 @@ def _generate_gemini(prompt, temperature=None, client=None, keys=None):
     except Exception:
         return None, None
 
-    def attempt(c):
+    def attempt(c, key=None):
         for model_name in GEMINI_CANDIDATE_MODELS:
             try:
                 kwargs = {"model": model_name, "contents": prompt}
@@ -163,6 +178,9 @@ def _generate_gemini(prompt, temperature=None, client=None, keys=None):
                 text = c.models.generate_content(**kwargs).text
             except Exception as exc:
                 logger.warning("Gemini gagal (%s): %s", model_name, exc)
+                if key and _is_dead_key_error(exc):
+                    _DEAD_KEYS.add(key)
+                    break
                 continue
             if text and str(text).strip():
                 return str(text).strip(), model_name
@@ -173,7 +191,7 @@ def _generate_gemini(prompt, temperature=None, client=None, keys=None):
         if text:
             return text, model
 
-    keys = list(keys if keys is not None else get_gemini_api_keys())
+    keys = [k for k in (keys if keys is not None else get_gemini_api_keys()) if k not in _DEAD_KEYS]
     num = len(keys)
     start = _starting_key_index(num)
     for offset in range(num):
@@ -182,7 +200,7 @@ def _generate_gemini(prompt, temperature=None, client=None, keys=None):
             c = genai.Client(api_key=keys[idx])
         except Exception:
             continue
-        text, model = attempt(c)
+        text, model = attempt(c, keys[idx])
         if text:
             _advance_key_index((idx + 1) % num)
             return text, model
@@ -200,6 +218,11 @@ def generate_text(prompt, temperature=0.3, client=None):
     if client is None and not get_gemini_api_keys() and not get_openrouter_key():
         return None, "No API Key"
 
+    if openrouter_primary():
+        backup = openrouter_generate(prompt, temperature=temperature)
+        if backup:
+            return backup, "OpenRouter"
+
     text, model = _generate_gemini(prompt, temperature=temperature, client=client)
     if text:
         return text, f"Gemini AI ({model})" if model else "Gemini AI"
@@ -208,6 +231,19 @@ def generate_text(prompt, temperature=0.3, client=None):
     if backup:
         return backup, "OpenRouter (Cadangan)"
     return None, "Failed"
+
+
+def openrouter_primary():
+    """True when ``OPENROUTER_PRIMARY`` is set, i.e. skip Gemini entirely.
+
+    Needed because the shipped Gemini keys are OAuth tokens that 401 on every
+    model: without the flag each narrative burns ~60s of failed round-trips
+    before the backup answers.
+    """
+    raw = read_secret("OPENROUTER_PRIMARY")
+    if raw is None:
+        raw = os.getenv("OPENROUTER_PRIMARY")
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_openrouter_models():
