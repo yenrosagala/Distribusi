@@ -1,0 +1,20 @@
+{
+  "name": "distribusi-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Node.js clone of the Pariwisata & Transportasi Papua dashboard, reading the same PostgreSQL database.",
+  "scripts": {
+    "start": "node --env-file-if-exists=../.env server.js",
+    "test": "node --test test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5"
+  }
+}
