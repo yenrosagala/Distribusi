@@ -992,14 +992,26 @@ def show_report_page():
         render_tables_and_narratives(all_collected_data)
 
         if all_collected_data:
-            master_word_file = create_complete_master_word_report(
-                meta['prov'], meta['thn'], meta['bln'], all_collected_data
-            )
+            import io
+            try:
+                import openpyxl  # noqa
+            except Exception:
+                pass
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                for item in all_collected_data:
+                    df = item.get('report_display_brs').copy() if item.get('report_display_brs') is not None else None
+                    if df is None:
+                        continue
+                    sheet_name = f"{item['table_no']}. {item['label']}"[:31]
+                    sheet_name = sheet_name.replace('[', '').replace(']', '').replace(':', '').replace('*', '').replace('?', '').replace('/', '-').replace('\\', '-')
+                    df.to_excel(writer, sheet_name=sheet_name)
+            output.seek(0)
             st.success("Laporan berhasil dimuat!")
             st.download_button(
-                label="📥 Download Master Dokumen Word (Semua 8 Tabel & Narasi)",
-                data=master_word_file,
-                file_name=f"Master_Laporan_Transportasi_{meta['prov']}_{meta['bln']}_{meta['thn']}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                label="📥 Download Tabel Excel (Hanya Tabel)",
+                data=output,
+                file_name=f"Tabel_Transportasi_{meta['prov']}_{meta['bln']}_{meta['thn']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             render_indesign_export(meta, all_collected_data)
