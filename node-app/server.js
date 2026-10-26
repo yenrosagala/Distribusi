@@ -813,6 +813,60 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (url.pathname === '/api/narrative/generate' && req.method === 'POST') {
+      if (!req.session?.user) return sendHtml(res, loginPage({ error: 'Silakan login terlebih dahulu.' }), 401);
+      if (req.session.user.role !== 'admin') return json(res, { error: 'Hanya admin' }, 403);
+      const form = await parseForm(req);
+      const values = form.values || {};
+      const kind = values.kind;
+      if (!kind) return json(res, { error: 'kind required' }, 400);
+      const child = spawn(PYTHON_BIN, ['gen_narrative.py'], { cwd: NODE_ROOT, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } });
+      let out = '', err = '';
+      child.stdout.on('data', d => { out += d.toString(); });
+      child.stderr.on('data', d => { err += d.toString(); });
+      child.on('error', e => { return json(res, { error: e.message }, 500); });
+      child.on('close', code => {
+        if (res.headersSent) return;
+        if (code !== 0) return json(res, { error: (err || out).split('\n').filter(Boolean).slice(-3).join(' ') }, 500);
+        try {
+          const j = JSON.parse(out.trim());
+          return json(res, j, j.error ? 500 : 200);
+        } catch {
+          return json(res, { error: 'bad json' }, 500);
+        }
+      });
+      child.stdin.write(JSON.stringify({ ...values, action: 'generate' }));
+      child.stdin.end();
+      return;
+    }
+
+    if (url.pathname === '/api/narrative/regenerate' && req.method === 'POST') {
+      if (!req.session?.user) return sendHtml(res, loginPage({ error: 'Silakan login terlebih dahulu.' }), 401);
+      if (req.session.user.role !== 'admin') return json(res, { error: 'Hanya admin' }, 403);
+      const form = await parseForm(req);
+      const values = form.values || {};
+      const kind = values.kind;
+      if (!kind) return json(res, { error: 'kind required' }, 400);
+      const child = spawn(PYTHON_BIN, ['gen_narrative.py'], { cwd: NODE_ROOT, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } });
+      let out = '', err = '';
+      child.stdout.on('data', d => { out += d.toString(); });
+      child.stderr.on('data', d => { err += d.toString(); });
+      child.on('error', e => { return json(res, { error: e.message }, 500); });
+      child.on('close', code => {
+        if (res.headersSent) return;
+        if (code !== 0) return json(res, { error: (err || out).split('\n').filter(Boolean).slice(-3).join(' ') }, 500);
+        try {
+          const j = JSON.parse(out.trim());
+          return json(res, j, j.error ? 500 : 200);
+        } catch {
+          return json(res, { error: 'bad json' }, 500);
+        }
+      });
+      child.stdin.write(JSON.stringify({ ...values, action: 'regenerate' }));
+      child.stdin.end();
+      return;
+    }
+
     if (url.pathname === '/export/transportasi/pptx') {
       const periods = sortPeriods(await availablePeriods());
       const selected = pickPeriod(periods, url.searchParams.get('periode'));

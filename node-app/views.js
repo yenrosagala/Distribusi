@@ -209,14 +209,15 @@ function brsTable(item) {
 }
 
 function transportNarrativeBox(item, isAdmin) {
+  const fields = `<input type="hidden" name="kind" value="transportasi"><input type="hidden" name="provinsi" value="${escapeHtml(item.prov)}"><input type="hidden" name="tahun" value="${escapeHtml(item.tahun)}"><input type="hidden" name="bulan" value="${escapeHtml(item.bulan)}"><input type="hidden" name="moda" value="${escapeHtml(item.moda)}"><input type="hidden" name="label" value="${escapeHtml(item.label)}">`;
   const regen = isAdmin
-    ? '<p class="muted">Regenerasi narasi AI hanya tersedia di aplikasi Streamlit (butuh kunci Gemini/OpenRouter).</p>'
+    ? `<form method="post" action="/api/narrative/regenerate" class="inline-form">${fields}<button class="btn btn-secondary" type="submit">🔄 Regenerasi</button></form>`
     : '';
   if (!item.narrative) {
-    const hint = isAdmin
-      ? 'Narasi AI belum dibuat untuk tabel ini. Buat lewat aplikasi Streamlit — kunci AI belum dikonfigurasi di aplikasi Node.'
-      : 'Narasi AI belum tersedia untuk tabel ini. Hubungi admin untuk membuatnya.';
-    return `<div class="alert alert-info">${escapeHtml(hint)}</div>`;
+    if (isAdmin) {
+      return `<div class="alert alert-info">Narasi AI belum dibuat untuk tabel ini.<form method="post" action="/api/narrative/generate" class="inline-form">${fields}<button class="btn btn-primary" type="submit">🤖 Generate Narasi AI</button></form></div>`;
+    }
+    return `<div class="alert alert-info">${escapeHtml('Narasi AI belum tersedia untuk tabel ini. Hubungi admin untuk membuatnya.')}</div>`;
   }
   const paras = item.narrative.paras
     .map((p) => `<p>${italicizeEnglish(escapeHtml(p), true)}</p>`)
@@ -653,17 +654,18 @@ function option(value, label, selected) {
 }
 
 function narrativeBox(entry, isAdmin) {
+  const fields = `<input type="hidden" name="kind" value="pariwisata"><input type="hidden" name="provinsi" value="${escapeHtml(entry.prov || entry.province)}"><input type="hidden" name="tahun" value="${entry.tahun || entry.year}"><input type="hidden" name="bulan" value="${entry.bulan || entry.month}"><input type="hidden" name="jenis_akomodasi" value="${escapeHtml(entry.jenis || entry.jenis_akomodasi)}"><input type="hidden" name="indikator" value="${escapeHtml(entry.indikator || entry.indicator)}">`;
   if (entry.narrative) {
     const paras = entry.narrative.split(/\n{2,}/).map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('');
     const regen = isAdmin
-      ? '<p class="muted">Regenerasi narasi AI hanya tersedia di aplikasi Streamlit (butuh kunci Gemini/OpenRouter).</p>'
+      ? `<form method="post" action="/api/narrative/regenerate" class="inline-form">${fields}<button class="btn btn-secondary" type="submit">🔄 Regenerasi</button></form>`
       : '';
-    return `<div class="ai-note"><strong>🤖 AI Narrative (from database):</strong>${paras}${regen}</div>`;
+    return `<div class="ai-note"><strong>🤖 AI Narrative (from database):</strong>${paras}<div class="narrative-actions">${regen}</div></div>`;
   }
-  const hint = isAdmin
-    ? 'Narasi AI belum dibuat untuk indikator ini. Buat lewat aplikasi Streamlit — kunci AI belum dikonfigurasi di aplikasi Node.'
-    : 'Narasi AI belum tersedia untuk indikator ini. Hubungi admin untuk membuatnya.';
-  return `<div class="alert alert-info">${escapeHtml(hint)}</div>`;
+  if (isAdmin) {
+    return `<div class="alert alert-info">Narasi AI belum dibuat untuk indikator ini.<form method="post" action="/api/narrative/generate" class="inline-form">${fields}<button class="btn btn-primary" type="submit">🤖 Generate Narasi AI</button></form></div>`;
+  }
+  return `<div class="alert alert-info">${escapeHtml('Narasi AI belum tersedia untuk indikator ini. Hubungi admin untuk membuatnya.')}</div>`;
 }
 
 function valueGrid(series) {

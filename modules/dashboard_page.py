@@ -232,7 +232,7 @@ def render_section_narrative(moda_nama, table, engine, cols_penumpang, cols_bara
         st.markdown(f"**📝 Ringkasan Naratif** *(Sumber: {source})*")
     with h2:
         # Tombol Regenerasi hanya di-enable jika admin sudah login
-        if st.session_state.get('admin_logged_in', False):
+        if st.session_state.get("role") == "admin":
             if st.button("🔄 Regenerasi", key=f"regen_{table}_{thn}_{bln}", width='stretch'):
                 delete_db_narrative(report_type, period_key)
                 st.rerun()
