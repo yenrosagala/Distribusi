@@ -418,8 +418,7 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
     sub["Bulan"] = sub["month"].apply(short)
     sub["Tahun"] = sub["year"].astype(int).astype(str)
     sub["_bln"] = sub["month"].astype(int)
-    sub["_fmt"] = ["" if pd.isna(v) else id_number(v) for v in sub[indicator]]
-
+    sub["_fmt"] = ["" if pd.isna(v) or v is None else ("" if (isinstance(v, float) and (pd.isna(v) or v != v)) else str(id_number(v)).replace('nan', '').replace('NaN', '')) for v in sub[indicator]]
     cur_months = sub.loc[sub["Tahun"] == str(year), "_bln"]
     target_month = int(month) if month else (int(cur_months.max()) if len(cur_months) else None)
     # Only the current year stops at the selected month — the previous year keeps
@@ -452,12 +451,15 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
         )
         if target_month is None:
             continue
-        months = [c[0] for c in tr.customdata]
-        teks = [c[1] for c in tr.customdata]
-        tr.text = [
-            t if int(m) == target_month else ""
-            for m, t in zip(months, teks)
-        ]
+        try:
+            months = [c[0] for c in tr.customdata]
+            teks = [c[1] for c in tr.customdata]
+            tr.text = [
+                (t if t is not None and t != 'nan' and str(t) != 'undefined' and int(m) == target_month else "")
+                for m, t in zip(months, teks)
+            ]
+        except Exception:
+            tr.text = []
         tr.mode = "lines+markers+text"
         # label away from each other so the pair stays legible when they overlap
         tr.textposition = "top center" if is_cur else "bottom center"
@@ -473,7 +475,7 @@ def render_yoy_chart(df_trend, indicator, jenis, province, year, month=None, hei
     nilai = {(th, b): v for th, b, v in zip(sub["Tahun"], sub["Bulan"], sub[indicator])}
     kolom = []
     for b in bulan_urut:
-        kolom.append(["" if pd.isna(nilai.get((th, b), np.nan)) else id_number(nilai[(th, b)])
+        kolom.append(["" if pd.isna(nilai.get((th, b), np.nan)) or nilai.get((th, b)) is None else ("" if (isinstance(nilai.get((th, b)), float) and (pd.isna(nilai.get((th, b))) or nilai.get((th, b)) != nilai.get((th, b)))) else str(id_number(nilai[(th, b)])).replace('nan','').replace('NaN',''))
                       for th in tahun_urut])
     aligns = ["left"] + ["center"] * len(bulan_urut)
     tabel = go.Table(

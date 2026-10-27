@@ -672,11 +672,13 @@ function valueGrid(series) {
   const months = series.labels.map((label, i) => ({ label, i }))
     .filter(({ i }) => series.prev[i] != null || series.cur[i] != null);
   if (!months.length) return '';
-  const cell = (v) => (v == null ? '' : formatIdNumber(v, 2));
-  const row = (label, values) => `<tr><th>${escapeHtml(label)}</th>${months.map(({ i }) => `<td>${cell(values[i])}</td>`).join('')}</tr>`;
+  const cell = (v) => (v == null || v === undefined || v === 'undefined' ? '' : formatIdNumber(v, 2));
+  const row = (label, values) => `<tr><th>${escapeHtml(label)}</th>${months.map(({ i }) => `<td>${cell(values && values[i])}</td>`).join('')}</tr>`;
+  const prevArr = Array.isArray(series.prev) ? series.prev : [];
+  const curArr = Array.isArray(series.cur) ? series.cur : [];
   return `<div class="table-scroll"><table class="data-table yoy-grid">
   <thead><tr><th>Tahun</th>${months.map(({ label }) => `<th>${escapeHtml(label)}</th>`).join('')}</tr></thead>
-  <tbody>${row(String(series.prevYear), series.prev)}${row(String(series.year), series.cur)}</tbody>
+  <tbody>${row(String(series.prevYear || ''), prevArr)}${row(String(series.year || ''), curArr)}</tbody>
 </table></div>`;
 }
 
@@ -705,17 +707,18 @@ function reportTab(report, isAdmin) {
 
   const configs = [];
   const cards = report.indicators.map((ind) => ind.jenis.map((entry) => {
+    const fmt = (v) => (v === undefined || v === null || v === 'undefined') ? '-' : v;
     const table = `<div class="table-scroll"><table class="data-table">
   <thead><tr><th>Kelas Akomodasi</th><th>${escapeHtml(entry.table.columns.last)}</th><th>${escapeHtml(entry.table.columns.prev)}</th><th>${escapeHtml(entry.table.columns.cur)}</th><th>${escapeHtml(entry.table.columns.dPrev)}</th><th>${escapeHtml(entry.table.columns.dLast)}</th></tr></thead>
-  <tbody>${entry.table.body.map((r) => `<tr><td>${escapeHtml(r.label)}</td><td>${r.last}</td><td>${r.prev}</td><td>${r.current}</td><td>${r.dPrev}</td><td>${r.dLast}</td></tr>`).join('')}</tbody>
-  <tfoot><tr><th>Total</th><td>${entry.table.total.last}</td><td>${entry.table.total.prev}</td><td>${entry.table.total.current}</td><td>${entry.table.total.dPrev}</td><td>${entry.table.total.dLast}</td></tr></tfoot>
+  <tbody>${entry.table.body.map((r) => `<tr><td>${escapeHtml(r.label)}</td><td>${fmt(r.last)}</td><td>${fmt(r.prev)}</td><td>${fmt(r.current)}</td><td>${fmt(r.dPrev)}</td><td>${fmt(r.dLast)}</td></tr>`).join('')}</tbody>
+  <tfoot><tr><th>Total</th><td>${fmt(entry.table.total.last)}</td><td>${fmt(entry.table.total.prev)}</td><td>${fmt(entry.table.total.current)}</td><td>${fmt(entry.table.total.dPrev)}</td><td>${fmt(entry.table.total.dLast)}</td></tr></tfoot>
 </table></div>`;
     const canvasId = `yoy-${ind.key}-${entry.jenis.replace(/\s+/g, '-')}`;
     configs.push({
       id: canvasId,
-      series: entry.series,
-      unit: ind.unit,
-      axis: `${ind.short} (${ind.unit.trim()})`,
+      series: entry.series || { labels: [], prev: [], cur: [], prevYear: '', year: '' },
+      unit: ind.unit || '',
+      axis: `${ind.short || ''} (${(ind.unit || '').trim()})`,
       curColor: '#ED7D31',
       prevColor: '#70AD47',
     });
