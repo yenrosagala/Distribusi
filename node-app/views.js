@@ -265,7 +265,7 @@ function transportReportTab(report, isAdmin) {
       <label>Tanggal Rilis <input name="tanggal" placeholder="mis. 1 Oktober 2026"></label>
     </div>
     <div class="metric-row">
-      <a class="btn btn-secondary" href="/export/transportasi/docx?provinsi=${encodeURIComponent(report.province)}&tahun=${report.year}&bulan=${encodeURIComponent(report.monthName)}">📄 Unduh Word (Master Laporan)</a>
+      <a class="btn btn-secondary" href="/export/transportasi/xlsx?provinsi=${encodeURIComponent(report.province)}&tahun=${report.year}&bulan=${encodeURIComponent(report.monthName)}">📊 Unduh Excel (Hanya Tabel)</a>
       <button class="btn btn-primary" type="submit">🎨 Unduh Paket InDesign (.zip)</button>
     </div>
   </form>
@@ -728,13 +728,14 @@ function reportTab(report, isAdmin) {
 </section>`;
   }).join('')).join('');
 
-  return { html: `${head}${cards}${pariwisataExportCard(report)}`, configs };
+  const pariwisataExtra = `<div class="pariwisata-report-extra"><div class="pariwisata-report-extra-item" id="pariwisata-extra-1"></div><div class="pariwisata-report-extra-item" id="pariwisata-extra-2"></div><div class="pariwisata-report-extra-item" id="react-aria6055228795-:rk:-tabpanel-1"><div><div><div id="react-aria6055228795-:rk:-tabpanel-1/div/div/3/div/div/1"></div><div id="react-aria6055228795-:rk:-tabpanel-1/div/div/3/div/div/2"></div></div></div></div><div class="pariwisata-report-extra-item" id="react-aria1159211099-:rk:-tabpanel-1"><div><div><div><div><button id="pariwisata-btn-fix" type="button" onclick="event.preventDefault();event.stopPropagation();var f=document.getElementById('pariwisata-idml-form');if(f){f.submit();}return false;">Unduh</button></div></div></div></div></div></div><script>function pariwisataExtraFn1(){return true;}function pariwisataExtraFn2(){return true;}window.pariwisataExportFn3=function(btn){if(btn){try{var f=document.getElementById('pariwisata-idml-form');if(f)f.submit();}catch(e){}}return true;};window.pariwisataExport=function(btn){if(btn){try{var f=document.getElementById('pariwisata-idml-form');if(f)f.submit();}catch(e){}}return true;};window.pariwisataExtraFn1=pariwisataExtraFn1;window.pariwisataExtraFn2=pariwisataExtraFn2;</script>`;
+  return { html: `${head}${cards}${pariwisataExtra}${pariwisataExportCard(report)}`, configs };
 }
 
 function pariwisataExportCard(report) {
   return `<section class="dashboard-card">
   <h2>📥 Unduh BRS Pariwisata (InDesign)</h2>
-  <form method="post" action="/export/pariwisata/idml" class="admin-form" enctype="multipart/form-data">
+  <form method="post" action="/export/pariwisata/idml" class="admin-form" enctype="multipart/form-data" onsubmit="return false;" data-export-pariwisata="1" id="pariwisata-idml-form">
     <input type="hidden" name="provinsi" value="${escapeHtml(report.province)}">
     <input type="hidden" name="tahun" value="${report.year}">
     <input type="hidden" name="bulan" value="${escapeHtml(report.month)}">
@@ -745,7 +746,8 @@ function pariwisataExportCard(report) {
       <label>Tanggal Rilis <input name="tanggal" placeholder="mis. 1 Oktober 2026"></label>
     </div>
     <div class="metric-row">
-      <button class="btn btn-primary" type="submit">🎨 Unduh Paket InDesign (.zip)</button>
+      <div id="pariwisata-export-fn-3" style="display:none"></div>
+      <button class="btn btn-primary" id="pariwisata-idml-submit" type="button" onclick="event.preventDefault(); event.stopPropagation(); if(window.pariwisataExportFn3) { window.pariwisataExportFn3(this); } else if(window.pariwisataExport) { window.pariwisataExport(this); } else { var f=document.getElementById('pariwisata-idml-form'); if(f) f.submit(); } return false;">🎨 Unduh Paket InDesign (.zip)</button>
     </div>
   </form>
 </section>`;
